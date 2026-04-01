@@ -102,11 +102,13 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chorus-core",
+ "chrono",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
