@@ -16,6 +16,7 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+lettre = { workspace = true }
 
 [lints]
 workspace = true
