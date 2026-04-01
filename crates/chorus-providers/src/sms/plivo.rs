@@ -39,10 +39,7 @@ impl SmsSender for PlivoSmsSender {
             ChorusError::Validation("SMS 'from' number is required for Plivo".to_string())
         })?;
 
-        let url = format!(
-            "https://api.plivo.com/v1/Account/{}/Message/",
-            self.auth_id
-        );
+        let url = format!("https://api.plivo.com/v1/Account/{}/Message/", self.auth_id);
 
         let payload = serde_json::json!({
             "src": from,
@@ -70,11 +67,9 @@ impl SmsSender for PlivoSmsSender {
             });
         }
 
-        let plivo_resp: PlivoResponse = resp.json().await.map_err(|e| {
-            ChorusError::Provider {
-                provider: "plivo".into(),
-                message: format!("parse error: {}", e),
-            }
+        let plivo_resp: PlivoResponse = resp.json().await.map_err(|e| ChorusError::Provider {
+            provider: "plivo".into(),
+            message: format!("parse error: {}", e),
         })?;
 
         let message_id = plivo_resp
@@ -103,14 +98,19 @@ mod tests {
 
     #[test]
     fn plivo_provider_name() {
-        let sender = PlivoSmsSender::new("auth123".into(), "token".into(), Some("+1234567890".into()));
+        let sender =
+            PlivoSmsSender::new("auth123".into(), "token".into(), Some("+1234567890".into()));
         assert_eq!(sender.provider_name(), "plivo");
     }
 
     #[tokio::test]
     async fn plivo_requires_from_number() {
         let sender = PlivoSmsSender::new("auth123".into(), "token".into(), None);
-        let msg = SmsMessage { to: "+66812345678".into(), body: "Hi".into(), from: None };
+        let msg = SmsMessage {
+            to: "+66812345678".into(),
+            body: "Hi".into(),
+            from: None,
+        };
         let result = sender.send(&msg).await;
         assert!(matches!(result, Err(ChorusError::Validation(_))));
     }

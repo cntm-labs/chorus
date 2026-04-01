@@ -86,7 +86,9 @@ mod tests {
         let json = serde_json::to_string(&sent).unwrap();
         assert_eq!(json, "\"sent\"");
 
-        let failed = DeliveryStatus::Failed { reason: "timeout".to_string() };
+        let failed = DeliveryStatus::Failed {
+            reason: "timeout".to_string(),
+        };
         let json = serde_json::to_value(&failed).unwrap();
         assert_eq!(json["failed"]["reason"], "timeout");
     }

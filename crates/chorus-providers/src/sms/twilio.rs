@@ -64,11 +64,9 @@ impl SmsSender for TwilioSmsSender {
             });
         }
 
-        let twilio_resp: TwilioResponse = resp.json().await.map_err(|e| {
-            ChorusError::Provider {
-                provider: "twilio".into(),
-                message: format!("parse error: {}", e),
-            }
+        let twilio_resp: TwilioResponse = resp.json().await.map_err(|e| ChorusError::Provider {
+            provider: "twilio".into(),
+            message: format!("parse error: {}", e),
         })?;
 
         Ok(SendResult {
@@ -91,14 +89,19 @@ mod tests {
 
     #[test]
     fn twilio_provider_name() {
-        let sender = TwilioSmsSender::new("AC123".into(), "token".into(), Some("+1234567890".into()));
+        let sender =
+            TwilioSmsSender::new("AC123".into(), "token".into(), Some("+1234567890".into()));
         assert_eq!(sender.provider_name(), "twilio");
     }
 
     #[tokio::test]
     async fn twilio_requires_from_number() {
         let sender = TwilioSmsSender::new("AC123".into(), "token".into(), None);
-        let msg = SmsMessage { to: "+66812345678".into(), body: "Hi".into(), from: None };
+        let msg = SmsMessage {
+            to: "+66812345678".into(),
+            body: "Hi".into(),
+            from: None,
+        };
         let result = sender.send(&msg).await;
         assert!(matches!(result, Err(ChorusError::Validation(_))));
     }

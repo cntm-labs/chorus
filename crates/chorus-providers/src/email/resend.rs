@@ -63,11 +63,9 @@ impl EmailSender for ResendEmailSender {
             });
         }
 
-        let resend_resp: ResendResponse = resp.json().await.map_err(|e| {
-            ChorusError::Provider {
-                provider: "resend".into(),
-                message: format!("parse error: {}", e),
-            }
+        let resend_resp: ResendResponse = resp.json().await.map_err(|e| ChorusError::Provider {
+            provider: "resend".into(),
+            message: format!("parse error: {}", e),
         })?;
 
         Ok(SendResult {

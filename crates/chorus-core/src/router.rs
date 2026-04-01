@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use crate::email::EmailSender;
 use crate::error::ChorusError;
 use crate::sms::SmsSender;
 use crate::types::{Channel, EmailMessage, SendResult, SmsMessage};
+use std::sync::Arc;
 
 /// A step in the waterfall routing chain.
 pub struct RouteStep {
@@ -156,7 +156,9 @@ mod tests {
     struct SuccessSms;
     #[async_trait::async_trait]
     impl SmsSender for SuccessSms {
-        fn provider_name(&self) -> &str { "test-sms" }
+        fn provider_name(&self) -> &str {
+            "test-sms"
+        }
         async fn send(&self, _msg: &SmsMessage) -> Result<SendResult, ChorusError> {
             Ok(SendResult {
                 message_id: "sms-1".to_string(),
@@ -174,19 +176,28 @@ mod tests {
     struct FailSms;
     #[async_trait::async_trait]
     impl SmsSender for FailSms {
-        fn provider_name(&self) -> &str { "fail-sms" }
+        fn provider_name(&self) -> &str {
+            "fail-sms"
+        }
         async fn send(&self, _msg: &SmsMessage) -> Result<SendResult, ChorusError> {
-            Err(ChorusError::Provider { provider: "fail-sms".into(), message: "timeout".into() })
+            Err(ChorusError::Provider {
+                provider: "fail-sms".into(),
+                message: "timeout".into(),
+            })
         }
         async fn check_status(&self, _id: &str) -> Result<DeliveryStatus, ChorusError> {
-            Ok(DeliveryStatus::Failed { reason: "timeout".into() })
+            Ok(DeliveryStatus::Failed {
+                reason: "timeout".into(),
+            })
         }
     }
 
     struct SuccessEmail;
     #[async_trait::async_trait]
     impl EmailSender for SuccessEmail {
-        fn provider_name(&self) -> &str { "test-email" }
+        fn provider_name(&self) -> &str {
+            "test-email"
+        }
         async fn send(&self, _msg: &EmailMessage) -> Result<SendResult, ChorusError> {
             Ok(SendResult {
                 message_id: "email-1".to_string(),
@@ -204,7 +215,10 @@ mod tests {
             .add_email(Arc::new(SuccessEmail))
             .add_sms(Arc::new(SuccessSms));
 
-        let result = router.send_otp("user@test.com", "123456", "TestApp").await.unwrap();
+        let result = router
+            .send_otp("user@test.com", "123456", "TestApp")
+            .await
+            .unwrap();
         assert_eq!(result.channel, Channel::Email);
         assert_eq!(result.provider, "test-email");
     }
@@ -215,7 +229,10 @@ mod tests {
             .add_email(Arc::new(SuccessEmail))
             .add_sms(Arc::new(SuccessSms));
 
-        let result = router.send_otp("+66812345678", "123456", "TestApp").await.unwrap();
+        let result = router
+            .send_otp("+66812345678", "123456", "TestApp")
+            .await
+            .unwrap();
         assert_eq!(result.channel, Channel::Sms);
         assert_eq!(result.provider, "test-sms");
     }
@@ -226,14 +243,16 @@ mod tests {
             .add_sms(Arc::new(FailSms))
             .add_sms(Arc::new(SuccessSms));
 
-        let result = router.send_otp("+66812345678", "123456", "TestApp").await.unwrap();
+        let result = router
+            .send_otp("+66812345678", "123456", "TestApp")
+            .await
+            .unwrap();
         assert_eq!(result.provider, "test-sms");
     }
 
     #[tokio::test]
     async fn waterfall_all_fail_returns_error() {
-        let router = WaterfallRouter::new()
-            .add_sms(Arc::new(FailSms));
+        let router = WaterfallRouter::new().add_sms(Arc::new(FailSms));
 
         let result = router.send_otp("+66812345678", "123456", "TestApp").await;
         assert!(matches!(result, Err(ChorusError::AllProvidersFailed)));
@@ -252,7 +271,11 @@ mod tests {
             .add_email(Arc::new(SuccessEmail))
             .add_sms(Arc::new(SuccessSms));
 
-        let msg = SmsMessage { to: "+66812345678".into(), body: "Hi".into(), from: None };
+        let msg = SmsMessage {
+            to: "+66812345678".into(),
+            body: "Hi".into(),
+            from: None,
+        };
         let result = router.send_sms(&msg).await.unwrap();
         assert_eq!(result.channel, Channel::Sms);
     }
@@ -264,8 +287,11 @@ mod tests {
             .add_sms(Arc::new(SuccessSms));
 
         let msg = EmailMessage {
-            to: "user@test.com".into(), subject: "Hi".into(),
-            html_body: "<p>Hi</p>".into(), text_body: "Hi".into(), from: None,
+            to: "user@test.com".into(),
+            subject: "Hi".into(),
+            html_body: "<p>Hi</p>".into(),
+            text_body: "Hi".into(),
+            from: None,
         };
         let result = router.send_email(&msg).await.unwrap();
         assert_eq!(result.channel, Channel::Email);

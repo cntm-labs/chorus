@@ -1,6 +1,6 @@
-use async_trait::async_trait;
 use crate::error::ChorusError;
 use crate::types::{DeliveryStatus, SendResult, SmsMessage};
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait SmsSender: Send + Sync {

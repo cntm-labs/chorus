@@ -68,11 +68,9 @@ impl SmsSender for TelnyxSmsSender {
             });
         }
 
-        let telnyx_resp: TelnyxResponse = resp.json().await.map_err(|e| {
-            ChorusError::Provider {
-                provider: "telnyx".into(),
-                message: format!("parse error: {}", e),
-            }
+        let telnyx_resp: TelnyxResponse = resp.json().await.map_err(|e| ChorusError::Provider {
+            provider: "telnyx".into(),
+            message: format!("parse error: {}", e),
         })?;
 
         Ok(SendResult {
@@ -102,7 +100,11 @@ mod tests {
     #[tokio::test]
     async fn telnyx_requires_from_number() {
         let sender = TelnyxSmsSender::new("fake-key".into(), None);
-        let msg = SmsMessage { to: "+66812345678".into(), body: "Hi".into(), from: None };
+        let msg = SmsMessage {
+            to: "+66812345678".into(),
+            body: "Hi".into(),
+            from: None,
+        };
         let result = sender.send(&msg).await;
         assert!(matches!(result, Err(ChorusError::Validation(_))));
     }

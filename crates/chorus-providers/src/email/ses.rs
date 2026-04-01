@@ -49,8 +49,14 @@ impl EmailSender for SesEmailSender {
         let from = msg.from.as_deref().unwrap_or(&self.from);
 
         let email = Message::builder()
-            .from(from.parse().map_err(|e| ChorusError::Validation(format!("invalid from: {}", e)))?)
-            .to(msg.to.parse().map_err(|e| ChorusError::Validation(format!("invalid to: {}", e)))?)
+            .from(
+                from.parse()
+                    .map_err(|e| ChorusError::Validation(format!("invalid from: {}", e)))?,
+            )
+            .to(msg
+                .to
+                .parse()
+                .map_err(|e| ChorusError::Validation(format!("invalid to: {}", e)))?)
             .subject(&msg.subject)
             .multipart(
                 MultiPart::alternative()
@@ -70,10 +76,13 @@ impl EmailSender for SesEmailSender {
                 message: format!("email build error: {}", e),
             })?;
 
-        self.transport.send(email).await.map_err(|e| ChorusError::Provider {
-            provider: "ses".into(),
-            message: format!("SMTP send error: {}", e),
-        })?;
+        self.transport
+            .send(email)
+            .await
+            .map_err(|e| ChorusError::Provider {
+                provider: "ses".into(),
+                message: format!("SMTP send error: {}", e),
+            })?;
 
         Ok(SendResult {
             message_id: Uuid::new_v4().to_string(),
