@@ -1,0 +1,39 @@
+codecov:
+  require_ci_to_pass: true
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 5%
+      core:
+        target: auto
+        threshold: 5%
+        flags: [core]
+      providers:
+        target: auto
+        threshold: 5%
+        flags: [providers]
+    patch:
+      default:
+        target: 70%
+
+flags:
+  core:
+    paths: [crates/chorus-core/]
+    carryforward: true
+  providers:
+    paths: [crates/chorus-providers/]
+    carryforward: true
+
+ignore:
+  - "sdks/"
+  - "load-tests/"
+  - "deploy/"
+  - "crates/*/benches/"
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: true
