@@ -1,0 +1,22 @@
+[package]
+name = "chorus-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Core traits and types for Chorus CPaaS"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

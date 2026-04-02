@@ -1,0 +1,22 @@
+[package]
+name = "chorus-providers"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "SMS and Email provider implementations for Chorus CPaaS"
+
+[dependencies]
+chorus-core = { path = "../chorus-core", version = "0.1.0" }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+lettre = { workspace = true }
+
+[lints]
+workspace = true
