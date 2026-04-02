@@ -17,6 +17,8 @@ cargo check --workspace          # Type check
 cargo test --workspace           # Run all tests
 cargo clippy --workspace -- -D warnings  # Lint
 cargo fmt --all                  # Format
+cargo deny check                 # License + advisory check
+cargo llvm-cov nextest --workspace  # Test with coverage
 ```
 
 ## Project Structure
@@ -53,3 +55,32 @@ sdks/
 - E.164 format required for phone numbers
 - Template variables use `{{variable}}` syntax
 - Cost tracked in microdollars (BIGINT) to avoid float issues
+
+## AI Development Guard Rails
+
+### Anti-patterns to Avoid
+- No `#[allow(dead_code)]` — use it or remove it
+- No duplicate functions/structs — extract shared logic to chorus-core
+- No spaghetti dependencies — follow dependency rules strictly
+- No magic numbers — use named constants
+- Max file ~300 lines — split if exceeding
+- No `dbg!()`, `print!()`, `todo!()` in production code
+- All public types/functions must have doc comments
+
+### Design Patterns Used in Chorus
+
+| Pattern | Where | Why |
+|---------|-------|-----|
+| Builder | `Chorus::builder()` | Complex config step-by-step |
+| Strategy | `SmsSender`, `EmailSender` traits | Swap providers at runtime |
+| Chain of Responsibility | `WaterfallRouter` | Try providers sequentially, fallback on failure |
+| Facade | `Chorus` client | Hide router/template/provider complexity |
+| Adapter | Provider implementations | Normalize different APIs to common trait |
+| Template Method | `Template::render()` | Algorithm skeleton for variable replacement |
+| Factory Method | `SesEmailSender::new()` | Create appropriate transport from config |
+
+### Refactoring Rules
+- **Extract Method** — if function > 30 lines, extract sub-functions
+- **Replace Conditional with Polymorphism** — use trait dispatch over growing match chains
+- **Introduce Parameter Object** — group related params into structs
+- **Separate Query from Modifier** — read-only methods must not have side effects
