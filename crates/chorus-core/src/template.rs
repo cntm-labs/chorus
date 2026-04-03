@@ -103,4 +103,52 @@ mod tests {
         let rendered = tmpl.render(&vars).unwrap();
         assert_eq!(rendered.subject, "999 is your code 999");
     }
+
+    #[test]
+    fn render_empty_template() {
+        let tmpl = Template {
+            slug: "empty".into(),
+            name: "Empty".into(),
+            subject: "".into(),
+            html_body: "".into(),
+            text_body: "".into(),
+            variables: vec![],
+        };
+        let rendered = tmpl.render(&HashMap::new()).unwrap();
+        assert_eq!(rendered.subject, "");
+        assert_eq!(rendered.html_body, "");
+        assert_eq!(rendered.text_body, "");
+    }
+
+    #[test]
+    fn render_no_placeholders() {
+        let tmpl = Template {
+            slug: "plain".into(),
+            name: "Plain".into(),
+            subject: "Welcome!".into(),
+            html_body: "<p>Hello world</p>".into(),
+            text_body: "Hello world".into(),
+            variables: vec![],
+        };
+        let rendered = tmpl.render(&HashMap::new()).unwrap();
+        assert_eq!(rendered.subject, "Welcome!");
+        assert_eq!(rendered.text_body, "Hello world");
+    }
+
+    #[test]
+    fn render_with_special_characters_in_value() {
+        let tmpl = Template {
+            slug: "test".into(),
+            name: "Test".into(),
+            subject: "Hello {{name}}".into(),
+            html_body: "<p>{{name}}</p>".into(),
+            text_body: "{{name}}".into(),
+            variables: vec!["name".into()],
+        };
+        let mut vars = HashMap::new();
+        vars.insert("name".into(), "O'Brien <script>".into());
+        let rendered = tmpl.render(&vars).unwrap();
+        assert_eq!(rendered.subject, "Hello O'Brien <script>");
+        assert!(rendered.html_body.contains("O'Brien <script>"));
+    }
 }
