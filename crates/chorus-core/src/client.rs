@@ -233,4 +233,92 @@ mod tests {
             .unwrap();
         assert_eq!(result.channel, Channel::Sms);
     }
+
+    struct CaptureSms {
+        captured_from: std::sync::Mutex<Option<Option<String>>>,
+    }
+    impl CaptureSms {
+        fn new() -> Self {
+            Self {
+                captured_from: std::sync::Mutex::new(None),
+            }
+        }
+    }
+    #[async_trait::async_trait]
+    impl SmsSender for CaptureSms {
+        fn provider_name(&self) -> &str {
+            "capture"
+        }
+        async fn send(&self, msg: &SmsMessage) -> Result<SendResult, ChorusError> {
+            *self.captured_from.lock().unwrap() = Some(msg.from.clone());
+            Ok(SendResult {
+                message_id: "c1".into(),
+                provider: "capture".into(),
+                channel: Channel::Sms,
+                status: DeliveryStatus::Sent,
+                created_at: chrono::Utc::now(),
+            })
+        }
+        async fn check_status(&self, _id: &str) -> Result<DeliveryStatus, ChorusError> {
+            Ok(DeliveryStatus::Delivered)
+        }
+    }
+
+    #[tokio::test]
+    async fn default_from_sms_applied_when_message_has_none() {
+        let capture = Arc::new(CaptureSms::new());
+        let chorus = Chorus::builder()
+            .add_sms_provider(capture.clone())
+            .default_from_sms("+66800000000".into())
+            .build();
+
+        let msg = SmsMessage {
+            to: "+66812345678".into(),
+            body: "Hi".into(),
+            from: None,
+        };
+        chorus.send_sms(&msg).await.unwrap();
+
+        let captured = capture.captured_from.lock().unwrap().clone().unwrap();
+        assert_eq!(captured, Some("+66800000000".to_string()));
+    }
+
+    #[tokio::test]
+    async fn default_from_sms_not_overridden_when_message_has_from() {
+        let capture = Arc::new(CaptureSms::new());
+        let chorus = Chorus::builder()
+            .add_sms_provider(capture.clone())
+            .default_from_sms("+66800000000".into())
+            .build();
+
+        let msg = SmsMessage {
+            to: "+66812345678".into(),
+            body: "Hi".into(),
+            from: Some("+66899999999".into()),
+        };
+        chorus.send_sms(&msg).await.unwrap();
+
+        let captured = capture.captured_from.lock().unwrap().clone().unwrap();
+        assert_eq!(captured, Some("+66899999999".to_string()));
+    }
+
+    #[test]
+    fn builder_default_creates_empty_builder() {
+        let builder = ChorusBuilder::default();
+        let chorus = builder.build();
+        // Should build without panic — empty but valid
+        assert!(chorus.templates.is_empty());
+    }
+
+    #[tokio::test]
+    async fn chorus_send_sms_without_providers_fails() {
+        let chorus = Chorus::builder().build();
+        let msg = SmsMessage {
+            to: "+66812345678".into(),
+            body: "Hi".into(),
+            from: None,
+        };
+        let result = chorus.send_sms(&msg).await;
+        assert!(matches!(result, Err(ChorusError::AllProvidersFailed)));
+    }
 }

@@ -296,4 +296,62 @@ mod tests {
         let result = router.send_email(&msg).await.unwrap();
         assert_eq!(result.channel, Channel::Email);
     }
+
+    #[tokio::test]
+    async fn send_sms_no_sms_providers_returns_error() {
+        let router = WaterfallRouter::new().add_email(Arc::new(SuccessEmail));
+
+        let msg = SmsMessage {
+            to: "+66812345678".into(),
+            body: "Hi".into(),
+            from: None,
+        };
+        let result = router.send_sms(&msg).await;
+        assert!(matches!(result, Err(ChorusError::AllProvidersFailed)));
+    }
+
+    #[tokio::test]
+    async fn send_email_no_email_providers_returns_error() {
+        let router = WaterfallRouter::new().add_sms(Arc::new(SuccessSms));
+
+        let msg = EmailMessage {
+            to: "user@test.com".into(),
+            subject: "Hi".into(),
+            html_body: "<p>Hi</p>".into(),
+            text_body: "Hi".into(),
+            from: None,
+        };
+        let result = router.send_email(&msg).await;
+        assert!(matches!(result, Err(ChorusError::AllProvidersFailed)));
+    }
+
+    #[tokio::test]
+    async fn send_sms_failover_across_providers() {
+        let router = WaterfallRouter::new()
+            .add_sms(Arc::new(FailSms))
+            .add_sms(Arc::new(SuccessSms));
+
+        let msg = SmsMessage {
+            to: "+66812345678".into(),
+            body: "Hi".into(),
+            from: None,
+        };
+        let result = router.send_sms(&msg).await.unwrap();
+        assert_eq!(result.provider, "test-sms");
+    }
+
+    #[tokio::test]
+    async fn send_sms_all_fail_returns_error() {
+        let router = WaterfallRouter::new()
+            .add_sms(Arc::new(FailSms))
+            .add_sms(Arc::new(FailSms));
+
+        let msg = SmsMessage {
+            to: "+66812345678".into(),
+            body: "Hi".into(),
+            from: None,
+        };
+        let result = router.send_sms(&msg).await;
+        assert!(matches!(result, Err(ChorusError::AllProvidersFailed)));
+    }
 }

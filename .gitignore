@@ -14,5 +14,13 @@ Thumbs.db
 # Environment
 .env
 
+# Coverage
+coverage-html/
+lcov.info
+*.profraw
+
+# Release
+/deploy/
+
 # Worktrees
 .worktrees
