@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-set -e
 
 echo "Running cargo fmt check..."
-cargo fmt --all -- --check
-if [ $? -ne 0 ]; then
+if ! cargo fmt --all -- --check; then
     echo ""
     echo "ERROR: Code is not formatted. Run 'cargo fmt --all' before committing."
     exit 1

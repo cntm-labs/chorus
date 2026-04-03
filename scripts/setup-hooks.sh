@@ -2,9 +2,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-HOOKS_DIR="$REPO_ROOT/.git/hooks"
+HOOKS_DIR="$(git rev-parse --git-common-dir)/hooks"
 
 echo "Installing git hooks..."
+mkdir -p "$HOOKS_DIR"
 ln -sf "$SCRIPT_DIR/pre-commit" "$HOOKS_DIR/pre-commit"
 echo "Done. Pre-commit hook installed."
