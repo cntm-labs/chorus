@@ -144,8 +144,7 @@ mod tests {
         assert_eq!(sent, DeliveryStatus::Queued);
 
         let failed: DeliveryStatus =
-            serde_json::from_value(serde_json::json!({"failed": {"reason": "no credit"}}))
-                .unwrap();
+            serde_json::from_value(serde_json::json!({"failed": {"reason": "no credit"}})).unwrap();
         assert_eq!(
             failed,
             DeliveryStatus::Failed {
