@@ -1,9 +1,24 @@
 {
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "packages": {
-    ".": {
+    "crates/chorus-core": {
       "release-type": "rust",
+      "component": "chorus-core",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true
+    },
+    "crates/chorus-providers": {
+      "release-type": "rust",
+      "component": "chorus-providers",
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true
     }
-  }
+  },
+  "group-pull-request-title-pattern": "chore: release ${version}",
+  "linked-versions": [
+    {
+      "tag": "v",
+      "components": ["chorus-core", "chorus-providers"]
+    }
+  ]
 }

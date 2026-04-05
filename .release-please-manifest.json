@@ -1,3 +1,4 @@
 {
-  ".": "0.1.0-beta"
+  "crates/chorus-core": "0.1.0-beta",
+  "crates/chorus-providers": "0.1.0-beta"
 }
