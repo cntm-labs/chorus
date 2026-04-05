@@ -76,6 +76,7 @@ pub async fn send_otp(
         account_id: message.account_id,
         channel: message.channel.clone(),
         environment: _ctx.environment,
+        attempt: 0,
     };
     crate::queue::enqueue::enqueue_job(&state, &job)
         .await

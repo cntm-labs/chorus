@@ -57,6 +57,7 @@ pub async fn send_sms(
         account_id: message.account_id,
         channel: "sms".into(),
         environment: message.environment.clone(),
+        attempt: 0,
     };
     crate::queue::enqueue::enqueue_job(&state, &job)
         .await
