@@ -1,4 +1,4 @@
 {
-  "crates/chorus-core": "0.1.1-beta",
-  "crates/chorus-providers": "0.1.1-beta"
+  "crates/chorus-core": "0.1.1",
+  "crates/chorus-providers": "0.1.1"
 }

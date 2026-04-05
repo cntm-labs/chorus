@@ -1,6 +1,6 @@
 [package]
 name = "chorus-core"
-version = "0.1.1-beta"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 description = "Core traits and types for Chorus CPaaS — SMS, Email, OTP with smart routing and multi-provider failover"
