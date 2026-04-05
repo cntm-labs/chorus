@@ -1,9 +1,15 @@
 [package]
 name = "chorus-core"
-version = "0.1.0"
+version = "0.1.0-beta"
 edition = "2021"
 license = "MIT"
-description = "Core traits and types for Chorus CPaaS"
+description = "Core traits and types for Chorus CPaaS — SMS, Email, OTP with smart routing and multi-provider failover"
+repository = "https://github.com/cntm-labs/chorus"
+homepage = "https://github.com/cntm-labs/chorus"
+keywords = ["sms", "email", "otp", "cpaas", "messaging"]
+categories = ["api-bindings", "network-programming"]
+readme = "README.md"
+rust-version = "1.85.0"
 
 [dependencies]
 serde = { workspace = true }

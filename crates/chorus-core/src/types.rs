@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// An SMS message to be sent to a single recipient.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmsMessage {
     pub to: String,
@@ -8,6 +9,7 @@ pub struct SmsMessage {
     pub from: Option<String>,
 }
 
+/// An email message with subject, HTML body, and plain text fallback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmailMessage {
     pub to: String,
@@ -17,6 +19,7 @@ pub struct EmailMessage {
     pub from: Option<String>,
 }
 
+/// An email message that references a template by slug instead of inline content.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateEmailMessage {
     pub to: String,
@@ -25,6 +28,7 @@ pub struct TemplateEmailMessage {
     pub from: Option<String>,
 }
 
+/// The result of a successful message delivery attempt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendResult {
     pub message_id: String,
@@ -34,6 +38,7 @@ pub struct SendResult {
     pub created_at: DateTime<Utc>,
 }
 
+/// The communication channel used for delivery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Channel {
@@ -41,6 +46,7 @@ pub enum Channel {
     Email,
 }
 
+/// The delivery status of a sent message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryStatus {

@@ -15,17 +15,22 @@ enum RouteSender {
     Email(Arc<dyn EmailSender>),
 }
 
-/// Waterfall router: tries each step in order, falls back to next on failure.
+/// Waterfall router: tries each provider in order, falls back to the next on failure.
+///
 /// Optimizes cost by trying cheaper channels (email) before expensive ones (SMS).
+/// For OTP delivery, automatically detects whether the recipient is an email address
+/// or phone number and routes accordingly.
 pub struct WaterfallRouter {
     steps: Vec<RouteStep>,
 }
 
 impl WaterfallRouter {
+    /// Creates an empty router with no providers.
     pub fn new() -> Self {
         Self { steps: Vec::new() }
     }
 
+    /// Adds an SMS provider to the routing chain. Providers are tried in insertion order.
     pub fn add_sms(mut self, provider: Arc<dyn SmsSender>) -> Self {
         self.steps.push(RouteStep {
             channel: Channel::Sms,
@@ -34,6 +39,7 @@ impl WaterfallRouter {
         self
     }
 
+    /// Adds an email provider to the routing chain. Providers are tried in insertion order.
     pub fn add_email(mut self, provider: Arc<dyn EmailSender>) -> Self {
         self.steps.push(RouteStep {
             channel: Channel::Email,
@@ -42,8 +48,7 @@ impl WaterfallRouter {
         self
     }
 
-    /// Send a message through the waterfall chain.
-    /// For OTP: recipient can be email or phone — tries each step in order.
+    /// Sends an OTP via waterfall routing. Routes to email if recipient contains `@`, otherwise SMS.
     pub async fn send_otp(
         &self,
         recipient: &str,
@@ -109,7 +114,7 @@ impl WaterfallRouter {
         Err(ChorusError::AllProvidersFailed)
     }
 
-    /// Send SMS directly (bypass waterfall).
+    /// Sends an SMS directly, trying each SMS provider in order until one succeeds.
     pub async fn send_sms(&self, msg: &SmsMessage) -> Result<SendResult, ChorusError> {
         for step in &self.steps {
             if let RouteSender::Sms(sender) = &step.sender {
@@ -125,7 +130,7 @@ impl WaterfallRouter {
         Err(ChorusError::AllProvidersFailed)
     }
 
-    /// Send email directly (bypass waterfall).
+    /// Sends an email directly, trying each email provider in order until one succeeds.
     pub async fn send_email(&self, msg: &EmailMessage) -> Result<SendResult, ChorusError> {
         for step in &self.steps {
             if let RouteSender::Email(sender) = &step.sender {
