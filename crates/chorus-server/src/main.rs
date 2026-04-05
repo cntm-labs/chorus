@@ -2,6 +2,7 @@ mod app;
 mod auth;
 mod config;
 mod db;
+mod otp;
 mod queue;
 mod routes;
 

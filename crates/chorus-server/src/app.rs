@@ -60,5 +60,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/v1/messages/{id}", get(routes::messages::get_message))
         .route("/v1/keys", get(routes::keys::list_keys).post(routes::keys::create_key))
         .route("/v1/keys/{id}", delete(routes::keys::revoke_key))
+        .route("/v1/otp/send", post(routes::otp::send_otp))
+        .route("/v1/otp/verify", post(routes::otp::verify_otp))
         .with_state(state)
 }
