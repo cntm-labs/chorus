@@ -2,6 +2,7 @@ use crate::error::ChorusError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// An email template with `{{variable}}` placeholders.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Template {
     pub slug: String,
@@ -13,7 +14,8 @@ pub struct Template {
 }
 
 impl Template {
-    /// Render template by replacing {{variable}} placeholders with values.
+    /// Renders the template by replacing `{{variable}}` placeholders with provided values.
+    /// Variables not found in the map are left as-is.
     pub fn render(
         &self,
         variables: &HashMap<String, String>,
@@ -38,6 +40,7 @@ impl Template {
     }
 }
 
+/// The result of rendering a [`Template`] with variable values.
 #[derive(Debug, Clone)]
 pub struct RenderedTemplate {
     pub subject: String,

@@ -16,10 +16,12 @@ pub struct Chorus {
 }
 
 impl Chorus {
+    /// Creates a new [`ChorusBuilder`] to configure the client.
     pub fn builder() -> ChorusBuilder {
         ChorusBuilder::new()
     }
 
+    /// Sends an SMS message, applying `default_from_sms` if the message has no `from`.
     pub async fn send_sms(&self, msg: &SmsMessage) -> Result<SendResult, ChorusError> {
         let msg = if msg.from.is_none() && self.default_from_sms.is_some() {
             let mut m = msg.clone();
@@ -31,10 +33,12 @@ impl Chorus {
         self.router.send_sms(&msg).await
     }
 
+    /// Sends an email message directly through the router.
     pub async fn send_email(&self, msg: &EmailMessage) -> Result<SendResult, ChorusError> {
         self.router.send_email(msg).await
     }
 
+    /// Renders a template by slug and sends the result as an email.
     pub async fn send_email_template(
         &self,
         to: &str,
@@ -59,6 +63,7 @@ impl Chorus {
         self.router.send_email(&msg).await
     }
 
+    /// Sends a one-time password via waterfall routing (email for `@` recipients, SMS for phone numbers).
     pub async fn send_otp(
         &self,
         recipient: &str,
@@ -69,6 +74,7 @@ impl Chorus {
     }
 }
 
+/// Builder for configuring a [`Chorus`] client.
 pub struct ChorusBuilder {
     router: WaterfallRouter,
     templates: HashMap<String, Template>,
@@ -86,31 +92,37 @@ impl ChorusBuilder {
         }
     }
 
+    /// Adds an SMS provider to the routing chain.
     pub fn add_sms_provider(mut self, provider: Arc<dyn SmsSender>) -> Self {
         self.router = self.router.add_sms(provider);
         self
     }
 
+    /// Adds an email provider to the routing chain.
     pub fn add_email_provider(mut self, provider: Arc<dyn EmailSender>) -> Self {
         self.router = self.router.add_email(provider);
         self
     }
 
+    /// Registers an email template for use with [`Chorus::send_email_template`].
     pub fn add_template(mut self, template: Template) -> Self {
         self.templates.insert(template.slug.clone(), template);
         self
     }
 
+    /// Sets the default `from` address for emails sent via templates.
     pub fn default_from_email(mut self, from: String) -> Self {
         self.default_from_email = Some(from);
         self
     }
 
+    /// Sets the default `from` number for SMS messages without an explicit sender.
     pub fn default_from_sms(mut self, from: String) -> Self {
         self.default_from_sms = Some(from);
         self
     }
 
+    /// Builds the [`Chorus`] client with the configured providers and templates.
     pub fn build(self) -> Chorus {
         Chorus {
             router: self.router,
