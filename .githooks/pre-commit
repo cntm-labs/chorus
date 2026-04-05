@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -e
+echo "Running pre-commit checks..."
+cargo fmt --all -- --check
+cargo clippy --workspace -- -D warnings
+cargo test --workspace --quiet
+echo "All checks passed!"
