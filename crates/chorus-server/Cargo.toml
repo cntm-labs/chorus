@@ -6,8 +6,8 @@ license = "MIT"
 description = "Axum REST API server for Chorus CPaaS"
 
 [dependencies]
-chorus-core = { path = "../chorus-core" }
-chorus-providers = { path = "../chorus-providers" }
+chorus-core = { path = "../chorus-core", version = "0.1.1" }
+chorus-providers = { path = "../chorus-providers", version = "0.1.1" }
 axum = { workspace = true }
 tower-http = { workspace = true }
 tokio = { workspace = true }
