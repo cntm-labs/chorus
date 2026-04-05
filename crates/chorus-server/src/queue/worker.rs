@@ -133,15 +133,9 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
         }
         Err(e) => {
             let error_msg = e.to_string();
-            repo.update_status(
-                job.message_id,
-                "retrying",
-                None,
-                None,
-                Some(&error_msg),
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            repo.update_status(job.message_id, "retrying", None, None, Some(&error_msg))
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             repo.insert_delivery_event(
                 job.message_id,
                 "failed_attempt",

@@ -24,9 +24,7 @@ pub fn build_test_router(channel: &str) -> WaterfallRouter {
 }
 
 /// Build a router from per-account provider configs (priority order).
-pub fn build_router_from_configs(
-    configs: &[ProviderConfig],
-) -> anyhow::Result<WaterfallRouter> {
+pub fn build_router_from_configs(configs: &[ProviderConfig]) -> anyhow::Result<WaterfallRouter> {
     let mut router = WaterfallRouter::new();
 
     for config in configs {
@@ -87,12 +85,8 @@ pub fn build_router_from_env(config: &Config, channel: &str) -> anyhow::Result<W
                 &config.ses_region,
                 &config.from_email,
             ) {
-                let sender = SesEmailSender::new(
-                    ak.clone(),
-                    sk.clone(),
-                    region.clone(),
-                    from.clone(),
-                )?;
+                let sender =
+                    SesEmailSender::new(ak.clone(), sk.clone(), region.clone(), from.clone())?;
                 router = router.add_email(Arc::new(sender));
             }
             if let (Some(ref host), Some(port), Some(ref user), Some(ref pass), Some(ref from)) = (
@@ -132,7 +126,10 @@ fn add_provider_to_router(
             Ok(router.add_sms(Arc::new(TelnyxSmsSender::new(api_key, from))))
         }
         ("sms", "twilio") => {
-            let sid = creds["account_sid"].as_str().unwrap_or_default().to_string();
+            let sid = creds["account_sid"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
             let token = creds["auth_token"].as_str().unwrap_or_default().to_string();
             let from = creds["from"].as_str().map(String::from);
             Ok(router.add_sms(Arc::new(TwilioSmsSender::new(sid, token, from))))

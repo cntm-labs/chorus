@@ -44,11 +44,17 @@ pub async fn create_provider_config(
     Json(req): Json<CreateProviderConfigRequest>,
 ) -> Result<(StatusCode, Json<ProviderConfig>), (StatusCode, String)> {
     if !VALID_CHANNELS.contains(&req.channel.as_str()) {
-        return Err((StatusCode::BAD_REQUEST, "channel must be 'sms' or 'email'".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "channel must be 'sms' or 'email'".into(),
+        ));
     }
 
     if !VALID_PROVIDERS.contains(&req.provider.as_str()) {
-        return Err((StatusCode::BAD_REQUEST, format!("unknown provider: {}", req.provider)));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("unknown provider: {}", req.provider),
+        ));
     }
 
     let config = state

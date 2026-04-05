@@ -16,9 +16,7 @@ pub fn spawn_delayed_poller(redis: redis::Client) {
 /// Move jobs whose retry-at timestamp has passed back to the main queue.
 async fn poll_delayed_jobs(redis: &redis::Client) -> anyhow::Result<()> {
     let mut conn = redis.get_multiplexed_tokio_connection().await?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
     // Fetch jobs that are due (score <= now)
     let jobs: Vec<String> = redis::cmd("ZRANGEBYSCORE")
@@ -53,10 +51,7 @@ async fn poll_delayed_jobs(redis: &redis::Client) -> anyhow::Result<()> {
 pub async fn schedule_retry(redis: &redis::Client, job: &super::SendJob) -> anyhow::Result<()> {
     let mut conn = redis.get_multiplexed_tokio_connection().await?;
     let backoff_secs = 1u64 << job.attempt.min(10) as u64; // 2^attempt: 1, 2, 4, ...
-    let retry_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs()
-        + backoff_secs;
+    let retry_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + backoff_secs;
 
     let payload = serde_json::to_string(job)?;
     redis::cmd("ZADD")
