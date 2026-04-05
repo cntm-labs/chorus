@@ -13,11 +13,7 @@ pub fn generate_code() -> String {
 }
 
 /// Store an OTP in Redis with TTL. Returns the OTP ID for verification.
-pub async fn store(
-    redis: &redis::Client,
-    recipient: &str,
-    code: &str,
-) -> anyhow::Result<Uuid> {
+pub async fn store(redis: &redis::Client, recipient: &str, code: &str) -> anyhow::Result<Uuid> {
     let otp_id = Uuid::new_v4();
     let recipient_hash = hex::encode(Sha256::digest(recipient.as_bytes()));
 
@@ -42,18 +38,11 @@ pub async fn store(
 
 /// Verify an OTP code. Returns `Ok(true)` on match, `Ok(false)` on mismatch.
 /// Deletes the OTP on success. Returns error if expired or max attempts reached.
-pub async fn verify(
-    redis: &redis::Client,
-    otp_id: Uuid,
-    code: &str,
-) -> anyhow::Result<bool> {
+pub async fn verify(redis: &redis::Client, otp_id: Uuid, code: &str) -> anyhow::Result<bool> {
     let key = format!("otp:{otp_id}");
     let mut conn = redis.get_multiplexed_tokio_connection().await?;
 
-    let raw: Option<String> = redis::cmd("GET")
-        .arg(&key)
-        .query_async(&mut conn)
-        .await?;
+    let raw: Option<String> = redis::cmd("GET").arg(&key).query_async(&mut conn).await?;
 
     let Some(raw) = raw else {
         anyhow::bail!("OTP expired or not found");
@@ -64,14 +53,20 @@ pub async fn verify(
     let attempts = data["attempts"].as_i64().unwrap_or(0);
     if attempts >= MAX_ATTEMPTS {
         // Delete on lockout
-        redis::cmd("DEL").arg(&key).query_async::<i64>(&mut conn).await?;
+        redis::cmd("DEL")
+            .arg(&key)
+            .query_async::<i64>(&mut conn)
+            .await?;
         anyhow::bail!("too many attempts");
     }
 
     let stored_code = data["code"].as_str().unwrap_or("");
     if stored_code == code {
         // Success — delete OTP
-        redis::cmd("DEL").arg(&key).query_async::<i64>(&mut conn).await?;
+        redis::cmd("DEL")
+            .arg(&key)
+            .query_async::<i64>(&mut conn)
+            .await?;
         return Ok(true);
     }
 

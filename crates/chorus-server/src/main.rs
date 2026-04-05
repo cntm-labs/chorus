@@ -1,13 +1,5 @@
-mod app;
-mod auth;
-mod config;
-mod db;
-mod otp;
-mod queue;
-mod routes;
-
-use app::{AppState, create_router};
-use config::Config;
+use chorus_server::app::{create_router, AppState};
+use chorus_server::config::Config;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -32,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(state);
 
     // Spawn background queue worker
-    queue::worker::spawn_worker(Arc::clone(&state));
+    chorus_server::queue::worker::spawn_worker(Arc::clone(&state));
 
     let app = create_router(state);
 

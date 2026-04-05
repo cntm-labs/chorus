@@ -94,7 +94,13 @@ pub async fn create_key(
 
     let api_key = state
         .api_key_repo()
-        .insert(ctx.account_id, &req.name, &key_hash, &key_prefix, &req.environment)
+        .insert(
+            ctx.account_id,
+            &req.name,
+            &key_hash,
+            &key_prefix,
+            &req.environment,
+        )
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

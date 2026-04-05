@@ -60,11 +60,7 @@ pub async fn send_otp(
         channel: if req.to.contains('@') { "email" } else { "sms" }.into(),
         sender: None,
         recipient: req.to,
-        subject: if body.len() > 0 {
-            Some(format!("{app_name} verification code"))
-        } else {
-            None
-        },
+        subject: Some(format!("{app_name} verification code")),
         body,
         environment: _ctx.environment.clone(),
     };

@@ -95,10 +95,7 @@ pub struct Pagination {
 #[async_trait]
 pub trait AccountRepository: Send + Sync {
     /// Find an account and its API key by the key's SHA-256 hash.
-    async fn find_by_api_key_hash(
-        &self,
-        hash: &str,
-    ) -> Result<Option<(Account, ApiKey)>, DbError>;
+    async fn find_by_api_key_hash(&self, hash: &str) -> Result<Option<(Account, ApiKey)>, DbError>;
 
     /// Update the `last_used_at` timestamp for an API key.
     async fn update_key_last_used(&self, key_id: Uuid) -> Result<(), DbError>;

@@ -9,9 +9,9 @@ use crate::routes;
 
 /// Shared application state accessible to all request handlers.
 pub struct AppState {
-    /// PostgreSQL connection pool.
-    pub db: PgPool,
-    /// Redis client for queue and caching.
+    /// PostgreSQL connection pool (used by health check and migrations).
+    pub db: Option<PgPool>,
+    /// Redis client for queue, caching, and OTP.
     pub redis: redis::Client,
     /// Account + API key repository.
     account_repo: Arc<dyn AccountRepository>,
@@ -22,15 +22,31 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Create app state from database pool and redis client.
+    /// Create app state backed by PostgreSQL.
     pub fn new(db: PgPool, redis: redis::Client) -> Self {
         let repo = Arc::new(PgRepository::new(db.clone()));
         Self {
-            db,
+            db: Some(db),
             redis,
             account_repo: repo.clone(),
             message_repo: repo.clone(),
             api_key_repo: repo,
+        }
+    }
+
+    /// Create app state with custom repositories (for testing).
+    pub fn with_repos(
+        redis: redis::Client,
+        account_repo: Arc<dyn AccountRepository>,
+        message_repo: Arc<dyn MessageRepository>,
+        api_key_repo: Arc<dyn ApiKeyRepository>,
+    ) -> Self {
+        Self {
+            db: None,
+            redis,
+            account_repo,
+            message_repo,
+            api_key_repo,
         }
     }
 
@@ -58,7 +74,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/v1/email/send", post(routes::email::send_email))
         .route("/v1/messages", get(routes::messages::list_messages))
         .route("/v1/messages/{id}", get(routes::messages::get_message))
-        .route("/v1/keys", get(routes::keys::list_keys).post(routes::keys::create_key))
+        .route(
+            "/v1/keys",
+            get(routes::keys::list_keys).post(routes::keys::create_key),
+        )
         .route("/v1/keys/{id}", delete(routes::keys::revoke_key))
         .route("/v1/otp/send", post(routes::otp::send_otp))
         .route("/v1/otp/verify", post(routes::otp::verify_otp))

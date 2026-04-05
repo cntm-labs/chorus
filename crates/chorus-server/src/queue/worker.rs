@@ -23,12 +23,11 @@ async fn process_next_job(state: &Arc<AppState>) -> anyhow::Result<()> {
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
 
     // BRPOP blocks until a job is available (timeout 5s)
-    let result: Option<(String, String)> =
-        redis::cmd("BRPOP")
-            .arg(QUEUE_KEY)
-            .arg(5)
-            .query_async(&mut conn)
-            .await?;
+    let result: Option<(String, String)> = redis::cmd("BRPOP")
+        .arg(QUEUE_KEY)
+        .arg(5)
+        .query_async(&mut conn)
+        .await?;
 
     let Some((_key, payload)) = result else {
         return Ok(());
@@ -45,9 +44,15 @@ async fn process_next_job(state: &Arc<AppState>) -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("message {} not found", job.message_id))?;
 
     if message.attempts >= MAX_RETRIES {
-        repo.update_status(job.message_id, "failed", None, None, Some("max retries exceeded"))
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        repo.update_status(
+            job.message_id,
+            "failed",
+            None,
+            None,
+            Some("max retries exceeded"),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
         repo.insert_delivery_event(
             job.message_id,
             "failed",
@@ -60,9 +65,15 @@ async fn process_next_job(state: &Arc<AppState>) -> anyhow::Result<()> {
 
     // In test environment, just mark as delivered without sending
     if job.environment == "test" {
-        repo.update_status(job.message_id, "delivered", Some("mock"), Some("test-mock-id"), None)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        repo.update_status(
+            job.message_id,
+            "delivered",
+            Some("mock"),
+            Some("test-mock-id"),
+            None,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
         repo.insert_delivery_event(
             job.message_id,
             "delivered",

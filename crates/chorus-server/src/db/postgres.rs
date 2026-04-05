@@ -21,10 +21,7 @@ impl PgRepository {
 
 #[async_trait]
 impl AccountRepository for PgRepository {
-    async fn find_by_api_key_hash(
-        &self,
-        hash: &str,
-    ) -> Result<Option<(Account, ApiKey)>, DbError> {
+    async fn find_by_api_key_hash(&self, hash: &str) -> Result<Option<(Account, ApiKey)>, DbError> {
         let row = sqlx::query_as::<_, Account>(
             "SELECT a.id, a.name, a.owner_email, a.is_active, a.created_at, a.updated_at
              FROM accounts a
@@ -165,10 +162,7 @@ impl MessageRepository for PgRepository {
         Ok(())
     }
 
-    async fn get_delivery_events(
-        &self,
-        message_id: Uuid,
-    ) -> Result<Vec<DeliveryEvent>, DbError> {
+    async fn get_delivery_events(&self, message_id: Uuid) -> Result<Vec<DeliveryEvent>, DbError> {
         let events = sqlx::query_as::<_, DeliveryEvent>(
             "SELECT * FROM delivery_events WHERE message_id = $1 ORDER BY created_at",
         )
@@ -225,14 +219,13 @@ impl ApiKeyRepository for PgRepository {
     }
 
     async fn revoke(&self, id: Uuid, account_id: Uuid) -> Result<(), DbError> {
-        let result = sqlx::query(
-            "UPDATE api_keys SET is_revoked = true WHERE id = $1 AND account_id = $2",
-        )
-        .bind(id)
-        .bind(account_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DbError::Internal(e.into()))?;
+        let result =
+            sqlx::query("UPDATE api_keys SET is_revoked = true WHERE id = $1 AND account_id = $2")
+                .bind(id)
+                .bind(account_id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| DbError::Internal(e.into()))?;
 
         if result.rows_affected() == 0 {
             return Err(DbError::NotFound);

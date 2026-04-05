@@ -17,11 +17,13 @@ pub struct HealthResponse {
 pub async fn health(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HealthResponse>, (StatusCode, &'static str)> {
-    // Verify database connectivity
-    sqlx::query("SELECT 1")
-        .execute(&state.db)
-        .await
-        .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "database unavailable"))?;
+    // Verify database connectivity (if pool is available)
+    if let Some(db) = &state.db {
+        sqlx::query("SELECT 1")
+            .execute(db)
+            .await
+            .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "database unavailable"))?;
+    }
 
     // Verify Redis connectivity
     let mut conn = state
