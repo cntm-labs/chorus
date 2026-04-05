@@ -1,0 +1,32 @@
+# Chorus Mail — Postfix main configuration
+# Variables replaced by entrypoint.sh: __MAIL_DOMAIN__, __HOSTNAME__
+
+myhostname = __HOSTNAME__
+mydomain = __MAIL_DOMAIN__
+myorigin = $mydomain
+mydestination = localhost
+mynetworks = 127.0.0.0/8 172.16.0.0/12 10.0.0.0/8 192.168.0.0/16
+
+# TLS
+smtp_tls_security_level = encrypt
+smtp_tls_loglevel = 1
+
+# Submission port (587) — used by chorus-server
+smtpd_sasl_auth_enable = no
+
+# OpenDKIM milter
+milter_default_action = accept
+milter_protocol = 6
+smtpd_milters = inet:localhost:8891
+non_smtpd_milters = inet:localhost:8891
+
+# Bounce handling
+notify_classes = bounce, resource, software
+bounce_notice_recipient = bounce-handler
+
+# Size limits
+message_size_limit = 10240000
+mailbox_size_limit = 0
+
+# Logging
+maillog_file = /dev/stdout
