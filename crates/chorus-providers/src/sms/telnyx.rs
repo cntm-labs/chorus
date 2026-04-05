@@ -31,6 +31,21 @@ struct TelnyxMessageData {
     id: String,
 }
 
+#[derive(Deserialize)]
+struct TelnyxStatusResponse {
+    data: TelnyxStatusData,
+}
+
+#[derive(Deserialize)]
+struct TelnyxStatusData {
+    to: Vec<TelnyxRecipientStatus>,
+}
+
+#[derive(Deserialize)]
+struct TelnyxRecipientStatus {
+    status: String,
+}
+
 #[async_trait]
 impl SmsSender for TelnyxSmsSender {
     fn provider_name(&self) -> &str {
@@ -82,8 +97,54 @@ impl SmsSender for TelnyxSmsSender {
         })
     }
 
-    async fn check_status(&self, _message_id: &str) -> Result<DeliveryStatus, ChorusError> {
-        Ok(DeliveryStatus::Sent)
+    async fn check_status(&self, message_id: &str) -> Result<DeliveryStatus, ChorusError> {
+        let url = format!("https://api.telnyx.com/v2/messages/{}", message_id);
+
+        let resp = self
+            .http_client
+            .get(&url)
+            .bearer_auth(&self.api_key)
+            .send()
+            .await
+            .map_err(|e| ChorusError::Provider {
+                provider: "telnyx".into(),
+                message: format!("HTTP error: {}", e),
+            })?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ChorusError::Provider {
+                provider: "telnyx".into(),
+                message: format!("status check failed: {}", body),
+            });
+        }
+
+        let status_resp: TelnyxStatusResponse =
+            resp.json().await.map_err(|e| ChorusError::Provider {
+                provider: "telnyx".into(),
+                message: format!("parse error: {}", e),
+            })?;
+
+        let status = status_resp
+            .data
+            .to
+            .first()
+            .map(|r| r.status.as_str())
+            .unwrap_or("unknown");
+
+        Ok(map_telnyx_status(status))
+    }
+}
+
+fn map_telnyx_status(status: &str) -> DeliveryStatus {
+    match status {
+        "delivered" => DeliveryStatus::Delivered,
+        "sent" => DeliveryStatus::Delivered,
+        "sending_failed" => DeliveryStatus::Failed {
+            reason: format!("telnyx status: {}", status),
+        },
+        "queued" | "sending" => DeliveryStatus::Sent,
+        _ => DeliveryStatus::Sent,
     }
 }
 
