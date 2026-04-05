@@ -1,0 +1,6 @@
+[advisories]
+# rsa v0.9.10 (RUSTSEC-2023-0071) is pulled into Cargo.lock as an optional
+# dependency of sqlx-macros-core for MySQL support. chorus does not enable
+# the MySQL feature and never links or uses the rsa crate. No fix is
+# available upstream; ignore until sqlx drops the dependency.
+ignore = ["RUSTSEC-2023-0071"]
