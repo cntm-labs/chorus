@@ -28,6 +28,11 @@ struct TwilioResponse {
     sid: String,
 }
 
+#[derive(Deserialize)]
+struct TwilioStatusResponse {
+    status: String,
+}
+
 #[async_trait]
 impl SmsSender for TwilioSmsSender {
     fn provider_name(&self) -> &str {
@@ -78,8 +83,50 @@ impl SmsSender for TwilioSmsSender {
         })
     }
 
-    async fn check_status(&self, _message_id: &str) -> Result<DeliveryStatus, ChorusError> {
-        Ok(DeliveryStatus::Sent)
+    async fn check_status(&self, message_id: &str) -> Result<DeliveryStatus, ChorusError> {
+        let url = format!(
+            "https://api.twilio.com/2010-04-01/Accounts/{}/Messages/{}.json",
+            self.account_sid, message_id
+        );
+
+        let resp = self
+            .http_client
+            .get(&url)
+            .basic_auth(&self.account_sid, Some(&self.auth_token))
+            .send()
+            .await
+            .map_err(|e| ChorusError::Provider {
+                provider: "twilio".into(),
+                message: format!("HTTP error: {}", e),
+            })?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ChorusError::Provider {
+                provider: "twilio".into(),
+                message: format!("status check failed: {}", body),
+            });
+        }
+
+        let status_resp: TwilioStatusResponse =
+            resp.json().await.map_err(|e| ChorusError::Provider {
+                provider: "twilio".into(),
+                message: format!("parse error: {}", e),
+            })?;
+
+        Ok(map_twilio_status(&status_resp.status))
+    }
+}
+
+fn map_twilio_status(status: &str) -> DeliveryStatus {
+    match status {
+        "delivered" => DeliveryStatus::Delivered,
+        "sent" => DeliveryStatus::Delivered,
+        "failed" | "undelivered" => DeliveryStatus::Failed {
+            reason: format!("twilio status: {}", status),
+        },
+        "queued" | "accepted" | "sending" => DeliveryStatus::Sent,
+        _ => DeliveryStatus::Sent,
     }
 }
 
