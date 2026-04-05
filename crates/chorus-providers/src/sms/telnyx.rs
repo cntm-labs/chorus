@@ -9,6 +9,7 @@ pub struct TelnyxSmsSender {
     api_key: String,
     from: Option<String>,
     http_client: reqwest::Client,
+    base_url: String,
 }
 
 impl TelnyxSmsSender {
@@ -17,7 +18,14 @@ impl TelnyxSmsSender {
             api_key,
             from,
             http_client: reqwest::Client::new(),
+            base_url: "https://api.telnyx.com".into(),
         }
+    }
+
+    #[cfg(test)]
+    fn with_base_url(mut self, base_url: String) -> Self {
+        self.base_url = base_url;
+        self
     }
 }
 
@@ -65,7 +73,7 @@ impl SmsSender for TelnyxSmsSender {
 
         let resp = self
             .http_client
-            .post("https://api.telnyx.com/v2/messages")
+            .post(format!("{}/v2/messages", self.base_url))
             .bearer_auth(&self.api_key)
             .json(&payload)
             .send()
@@ -98,7 +106,7 @@ impl SmsSender for TelnyxSmsSender {
     }
 
     async fn check_status(&self, message_id: &str) -> Result<DeliveryStatus, ChorusError> {
-        let url = format!("https://api.telnyx.com/v2/messages/{}", message_id);
+        let url = format!("{}/v2/messages/{}", self.base_url, message_id);
 
         let resp = self
             .http_client
@@ -202,5 +210,45 @@ mod tests {
             map_telnyx_status("something_else"),
             DeliveryStatus::Sent
         ));
+    }
+
+    #[tokio::test]
+    async fn check_status_returns_delivered() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v2/messages/msg-123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "to": [{"status": "delivered"}]
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let sender = TelnyxSmsSender::new("fake-key".into(), Some("+1".into()))
+            .with_base_url(mock_server.uri());
+        let status = sender.check_status("msg-123").await.unwrap();
+        assert!(matches!(status, DeliveryStatus::Delivered));
+    }
+
+    #[tokio::test]
+    async fn check_status_returns_error_on_failure() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v2/messages/msg-999"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("error"))
+            .mount(&mock_server)
+            .await;
+
+        let sender = TelnyxSmsSender::new("fake-key".into(), Some("+1".into()))
+            .with_base_url(mock_server.uri());
+        let result = sender.check_status("msg-999").await;
+        assert!(matches!(result, Err(ChorusError::Provider { .. })));
     }
 }

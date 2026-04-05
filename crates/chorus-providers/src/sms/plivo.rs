@@ -10,6 +10,7 @@ pub struct PlivoSmsSender {
     auth_token: String,
     from: Option<String>,
     http_client: reqwest::Client,
+    base_url: String,
 }
 
 impl PlivoSmsSender {
@@ -19,7 +20,14 @@ impl PlivoSmsSender {
             auth_token,
             from,
             http_client: reqwest::Client::new(),
+            base_url: "https://api.plivo.com".into(),
         }
+    }
+
+    #[cfg(test)]
+    fn with_base_url(mut self, base_url: String) -> Self {
+        self.base_url = base_url;
+        self
     }
 }
 
@@ -44,7 +52,7 @@ impl SmsSender for PlivoSmsSender {
             ChorusError::Validation("SMS 'from' number is required for Plivo".to_string())
         })?;
 
-        let url = format!("https://api.plivo.com/v1/Account/{}/Message/", self.auth_id);
+        let url = format!("{}/v1/Account/{}/Message/", self.base_url, self.auth_id);
 
         let payload = serde_json::json!({
             "src": from,
@@ -94,8 +102,8 @@ impl SmsSender for PlivoSmsSender {
 
     async fn check_status(&self, message_id: &str) -> Result<DeliveryStatus, ChorusError> {
         let url = format!(
-            "https://api.plivo.com/v1/Account/{}/Message/{}/",
-            self.auth_id, message_id
+            "{}/v1/Account/{}/Message/{}/",
+            self.base_url, self.auth_id, message_id
         );
 
         let resp = self
@@ -193,5 +201,44 @@ mod tests {
             map_plivo_status("something_else"),
             DeliveryStatus::Sent
         ));
+    }
+
+    #[tokio::test]
+    async fn check_status_returns_delivered() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/Account/auth123/Message/uuid-123/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"message_state": "delivered"})),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let sender = PlivoSmsSender::new("auth123".into(), "token".into(), Some("+1".into()))
+            .with_base_url(mock_server.uri());
+        let status = sender.check_status("uuid-123").await.unwrap();
+        assert!(matches!(status, DeliveryStatus::Delivered));
+    }
+
+    #[tokio::test]
+    async fn check_status_returns_error_on_failure() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/Account/auth123/Message/uuid-999/"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("forbidden"))
+            .mount(&mock_server)
+            .await;
+
+        let sender = PlivoSmsSender::new("auth123".into(), "token".into(), Some("+1".into()))
+            .with_base_url(mock_server.uri());
+        let result = sender.check_status("uuid-999").await;
+        assert!(matches!(result, Err(ChorusError::Provider { .. })));
     }
 }

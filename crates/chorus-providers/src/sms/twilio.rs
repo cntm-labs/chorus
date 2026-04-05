@@ -10,6 +10,7 @@ pub struct TwilioSmsSender {
     auth_token: String,
     from: Option<String>,
     http_client: reqwest::Client,
+    base_url: String,
 }
 
 impl TwilioSmsSender {
@@ -19,7 +20,14 @@ impl TwilioSmsSender {
             auth_token,
             from,
             http_client: reqwest::Client::new(),
+            base_url: "https://api.twilio.com".into(),
         }
+    }
+
+    #[cfg(test)]
+    fn with_base_url(mut self, base_url: String) -> Self {
+        self.base_url = base_url;
+        self
     }
 }
 
@@ -45,8 +53,8 @@ impl SmsSender for TwilioSmsSender {
         })?;
 
         let url = format!(
-            "https://api.twilio.com/2010-04-01/Accounts/{}/Messages.json",
-            self.account_sid
+            "{}/2010-04-01/Accounts/{}/Messages.json",
+            self.base_url, self.account_sid
         );
 
         let resp = self
@@ -85,8 +93,8 @@ impl SmsSender for TwilioSmsSender {
 
     async fn check_status(&self, message_id: &str) -> Result<DeliveryStatus, ChorusError> {
         let url = format!(
-            "https://api.twilio.com/2010-04-01/Accounts/{}/Messages/{}.json",
-            self.account_sid, message_id
+            "{}/2010-04-01/Accounts/{}/Messages/{}.json",
+            self.base_url, self.account_sid, message_id
         );
 
         let resp = self
@@ -193,5 +201,44 @@ mod tests {
             map_twilio_status("something_else"),
             DeliveryStatus::Sent
         ));
+    }
+
+    #[tokio::test]
+    async fn check_status_returns_delivered() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/2010-04-01/Accounts/AC123/Messages/SM123.json"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"status": "delivered"})),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let sender = TwilioSmsSender::new("AC123".into(), "token".into(), Some("+1".into()))
+            .with_base_url(mock_server.uri());
+        let status = sender.check_status("SM123").await.unwrap();
+        assert!(matches!(status, DeliveryStatus::Delivered));
+    }
+
+    #[tokio::test]
+    async fn check_status_returns_error_on_failure() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/2010-04-01/Accounts/AC123/Messages/SM999.json"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+            .mount(&mock_server)
+            .await;
+
+        let sender = TwilioSmsSender::new("AC123".into(), "token".into(), Some("+1".into()))
+            .with_base_url(mock_server.uri());
+        let result = sender.check_status("SM999").await;
+        assert!(matches!(result, Err(ChorusError::Provider { .. })));
     }
 }
