@@ -13,18 +13,22 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let config = Config::from_env();
+    let config = Arc::new(Config::from_env());
 
     let db = sqlx::PgPool::connect(&config.database_url).await?;
     sqlx::migrate!("src/db/migrations").run(&db).await?;
 
     let redis = redis::Client::open(config.redis_url.as_str())?;
-
     let state = AppState::new(db, redis);
     let state = Arc::new(state);
 
-    // Spawn background queue worker
-    chorus_server::queue::worker::spawn_worker(Arc::clone(&state));
+    // Spawn background queue workers and delayed poller
+    chorus_server::queue::worker::spawn_workers(
+        Arc::clone(&state),
+        Arc::clone(&config),
+        config.worker_concurrency,
+    );
+    chorus_server::queue::delayed::spawn_delayed_poller(state.redis.clone());
 
     let app = create_router(state);
 

@@ -4,7 +4,8 @@ use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::db::postgres::PgRepository;
-use crate::db::{AccountRepository, ApiKeyRepository, MessageRepository};
+use crate::db::provider_config::PgProviderConfigRepository;
+use crate::db::{AccountRepository, ApiKeyRepository, MessageRepository, ProviderConfigRepository};
 use crate::routes;
 
 /// Shared application state accessible to all request handlers.
@@ -19,18 +20,22 @@ pub struct AppState {
     message_repo: Arc<dyn MessageRepository>,
     /// API key management repository.
     api_key_repo: Arc<dyn ApiKeyRepository>,
+    /// Provider config repository.
+    provider_config_repo: Arc<dyn ProviderConfigRepository>,
 }
 
 impl AppState {
     /// Create app state backed by PostgreSQL.
     pub fn new(db: PgPool, redis: redis::Client) -> Self {
         let repo = Arc::new(PgRepository::new(db.clone()));
+        let provider_config_repo = Arc::new(PgProviderConfigRepository::new(db.clone()));
         Self {
             db: Some(db),
             redis,
             account_repo: repo.clone(),
             message_repo: repo.clone(),
             api_key_repo: repo,
+            provider_config_repo,
         }
     }
 
@@ -40,6 +45,7 @@ impl AppState {
         account_repo: Arc<dyn AccountRepository>,
         message_repo: Arc<dyn MessageRepository>,
         api_key_repo: Arc<dyn ApiKeyRepository>,
+        provider_config_repo: Arc<dyn ProviderConfigRepository>,
     ) -> Self {
         Self {
             db: None,
@@ -47,6 +53,7 @@ impl AppState {
             account_repo,
             message_repo,
             api_key_repo,
+            provider_config_repo,
         }
     }
 
@@ -63,6 +70,11 @@ impl AppState {
     /// Access the API key repository.
     pub fn api_key_repo(&self) -> Arc<dyn ApiKeyRepository> {
         Arc::clone(&self.api_key_repo)
+    }
+
+    /// Access the provider config repository.
+    pub fn provider_config_repo(&self) -> Arc<dyn ProviderConfigRepository> {
+        Arc::clone(&self.provider_config_repo)
     }
 }
 
