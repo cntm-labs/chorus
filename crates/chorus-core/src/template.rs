@@ -57,9 +57,8 @@ fn render_string(
 ) -> Result<String, ChorusError> {
     let env = minijinja::Environment::new();
     let ctx = minijinja::value::Value::from_serialize(variables);
-    env.render_str(template, ctx).map_err(|e| {
-        ChorusError::Validation(format!("template render error: {}", e))
-    })
+    env.render_str(template, ctx)
+        .map_err(|e| ChorusError::Validation(format!("template render error: {}", e)))
 }
 
 #[cfg(test)]
