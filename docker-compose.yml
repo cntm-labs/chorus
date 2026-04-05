@@ -36,11 +36,22 @@ services:
       PORT: "3000"
       WORKER_CONCURRENCY: "4"
       RUST_LOG: chorus_server=debug,tower_http=debug
+      BOUNCE_SECRET: ${BOUNCE_SECRET:-changeme}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  chorus-mail:
+    build: ./chorus-mail
+    environment:
+      MAIL_DOMAIN: ${MAIL_DOMAIN:-example.com}
+      CHORUS_SERVER_URL: http://chorus-server:3000
+      BOUNCE_SECRET: ${BOUNCE_SECRET:-changeme}
+    ports:
+      - "25:25"
+      - "587:587"
 
 volumes:
   pgdata:
