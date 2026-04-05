@@ -26,6 +26,7 @@ dotenvy = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
 async-trait = { workspace = true }
+hickory-resolver = { workspace = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
