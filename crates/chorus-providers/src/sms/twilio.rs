@@ -152,4 +152,46 @@ mod tests {
         let result = sender.send(&msg).await;
         assert!(matches!(result, Err(ChorusError::Validation(_))));
     }
+
+    #[test]
+    fn map_status_delivered() {
+        assert!(matches!(
+            map_twilio_status("delivered"),
+            DeliveryStatus::Delivered
+        ));
+        assert!(matches!(
+            map_twilio_status("sent"),
+            DeliveryStatus::Delivered
+        ));
+    }
+
+    #[test]
+    fn map_status_failed() {
+        assert!(matches!(
+            map_twilio_status("failed"),
+            DeliveryStatus::Failed { .. }
+        ));
+        assert!(matches!(
+            map_twilio_status("undelivered"),
+            DeliveryStatus::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn map_status_sent() {
+        assert!(matches!(map_twilio_status("queued"), DeliveryStatus::Sent));
+        assert!(matches!(
+            map_twilio_status("accepted"),
+            DeliveryStatus::Sent
+        ));
+        assert!(matches!(map_twilio_status("sending"), DeliveryStatus::Sent));
+    }
+
+    #[test]
+    fn map_status_unknown_defaults_to_sent() {
+        assert!(matches!(
+            map_twilio_status("something_else"),
+            DeliveryStatus::Sent
+        ));
+    }
 }

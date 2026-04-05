@@ -160,4 +160,38 @@ mod tests {
         let result = sender.send(&msg).await;
         assert!(matches!(result, Err(ChorusError::Validation(_))));
     }
+
+    #[test]
+    fn map_status_delivered() {
+        assert!(matches!(
+            map_plivo_status("delivered"),
+            DeliveryStatus::Delivered
+        ));
+    }
+
+    #[test]
+    fn map_status_failed() {
+        assert!(matches!(
+            map_plivo_status("failed"),
+            DeliveryStatus::Failed { .. }
+        ));
+        assert!(matches!(
+            map_plivo_status("rejected"),
+            DeliveryStatus::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn map_status_sent() {
+        assert!(matches!(map_plivo_status("queued"), DeliveryStatus::Sent));
+        assert!(matches!(map_plivo_status("sent"), DeliveryStatus::Sent));
+    }
+
+    #[test]
+    fn map_status_unknown_defaults_to_sent() {
+        assert!(matches!(
+            map_plivo_status("something_else"),
+            DeliveryStatus::Sent
+        ));
+    }
 }
