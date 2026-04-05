@@ -1,39 +1,63 @@
-# Chorus
+<div align="center">
+
+# chorus
+
+**Open-source Communications Platform as a Service (CPaaS) — SMS, Email, OTP with smart routing and multi-provider failover.**
 
 [![CI](https://github.com/cntm-labs/chorus/actions/workflows/ci.yml/badge.svg)](https://github.com/cntm-labs/chorus/actions/workflows/ci.yml)
 [![Security](https://github.com/cntm-labs/chorus/actions/workflows/security.yml/badge.svg)](https://github.com/cntm-labs/chorus/actions/workflows/security.yml)
+[![Release](https://github.com/cntm-labs/chorus/actions/workflows/release-please.yml/badge.svg)](https://github.com/cntm-labs/chorus/actions/workflows/release-please.yml)
 [![codecov](https://codecov.io/gh/cntm-labs/chorus/branch/main/graph/badge.svg)](https://codecov.io/gh/cntm-labs/chorus)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)](https://www.rust-lang.org/)
-[![Lines of Code](https://img.shields.io/badge/Lines_of_Code-1.5k-informational.svg)]()
 
-Open-source Communications Platform as a Service (CPaaS) — SMS, Email, OTP delivery with smart routing, multi-provider failover, and cost optimization. Built in Rust.
+[![crates.io chorus-core](https://img.shields.io/crates/v/chorus-core?label=chorus-core&color=fc8d62)](https://crates.io/crates/chorus-core)
+[![crates.io chorus-providers](https://img.shields.io/crates/v/chorus-providers?label=chorus-providers&color=fc8d62)](https://crates.io/crates/chorus-providers)
+[![docs.rs](https://img.shields.io/docsrs/chorus-core?label=docs.rs)](https://docs.rs/chorus-core)
+
+[![Rust](https://img.shields.io/badge/Rust-dea584?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Axum](https://img.shields.io/badge/Axum-dea584?logo=rust&logoColor=white)](https://github.com/tokio-rs/axum)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-DC382D?logo=redis&logoColor=white)](https://redis.io/)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![Stripe](https://img.shields.io/badge/Stripe-635BFF?logo=stripe&logoColor=white)](https://stripe.com/)
+
+</div>
+
+---
+
+Rust backend (Axum) with waterfall routing — email first (free), SMS fallback (paid) — saving 60-80% cost. Supports 6 providers with automatic failover.
 
 ## Features
 
-- **Waterfall Routing** — Email first (free) then SMS fallback (paid), saving 60-80% cost
-- **Multi-Provider Failover** — Auto-retry with next provider on failure
-- **6 Providers** — Telnyx, Twilio, Plivo (SMS) + Resend, AWS SES, SMTP (Email)
-- **Template Engine** — `{{variable}}` syntax with OTP generation
-- **Test Mode** — `ch_test_` API keys log only, never send real messages
-- **Self-Hosted Free** — MIT license, no billing when self-hosted
+- **Waterfall routing** — email first (free) then SMS fallback (paid), saving 60-80% cost
+- **Multi-provider failover** — auto-retry with next provider on failure
+- **6 providers** — Telnyx, Twilio, Plivo (SMS) + Resend, AWS SES, SMTP (Email)
+- **Template engine** — `{{variable}}` syntax with OTP generation
+- **Test mode** — `ch_test_` API keys log only, never send real messages
+- **Self-hosted free** — MIT license, no billing when self-hosted
 
 ## Quick Start
 
 ```rust
-use chorus_core::Chorus;
+use chorus_core::client::Chorus;
+use chorus_core::types::SmsMessage;
+use std::sync::Arc;
 
 let chorus = Chorus::builder()
-    .with_sms_provider(telnyx)
-    .with_email_provider(resend)
-    .enable_waterfall_routing()
+    .add_sms_provider(Arc::new(telnyx))
+    .add_email_provider(Arc::new(resend))
+    .default_from_sms("+1234567890".into())
     .build();
 
 // Send SMS
-chorus.send_sms("+1234567890", "Hello from Chorus!").await?;
+let msg = SmsMessage {
+    to: "+0987654321".into(),
+    body: "Hello from Chorus!".into(),
+    from: None,
+};
+chorus.send_sms(&msg).await?;
 
 // Send OTP via email with SMS fallback
-chorus.send_otp("user@example.com", 6).await?;
+chorus.send_otp("user@example.com", "123456", "MyApp").await?;
 ```
 
 ## Architecture
@@ -52,47 +76,21 @@ sdks/
 └── c/
 ```
 
-## Tech Stack
-
-| Component | Technology |
-|-----------|-----------|
-| Language | Rust (stable) |
-| Web Framework | Axum |
-| Database | PostgreSQL 16 + Redis 7 |
-| SMS Providers | Telnyx, Twilio, Plivo |
-| Email Providers | Resend, AWS SES, SMTP |
-| Payment | Stripe + Stripe Tax |
-| Monitoring | Prometheus + Loki |
-| CI/CD | GitHub Actions + Release Please |
-| Container | Docker (ghcr.io) |
-
 ## Development
 
 ```sh
-# Prerequisites: Rust stable toolchain
 cargo check --workspace          # Type check
 cargo test --workspace           # Run all tests
 cargo clippy --workspace -- -D warnings  # Lint
 cargo fmt --all                  # Format
-cargo deny check                 # License + advisory check
-
-# Dev watch (requires bacon)
-bacon                            # Auto-check on save
-bacon clippy                     # Auto-lint on save
-bacon test                       # Auto-test on save
 
 # Setup pre-commit hook
-./scripts/setup-hooks.sh
+git config core.hooksPath .githooks
 ```
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Run `./scripts/setup-hooks.sh` to install pre-commit hooks
-4. Make your changes and ensure all checks pass
-5. Commit with [Conventional Commits](https://www.conventionalcommits.org/) format
-6. Push and open a Pull Request
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
