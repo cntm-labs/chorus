@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/chorus-core",
     "crates/chorus-providers",
+    "crates/chorus-server",
 ]
 
 [workspace.dependencies]
@@ -38,6 +39,22 @@ url = "2"
 
 # Email (SMTP)
 lettre = { version = "0.11", features = ["tokio1-native-tls"] }
+
+# Web
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Database
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-native-tls", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
+
+# Redis
+redis = { version = "0.27", features = ["tokio-comp"] }
+
+# Crypto (hash)
+sha2 = "0.10"
+
+# Config
+dotenvy = "0.15"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

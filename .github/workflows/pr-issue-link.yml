@@ -1,0 +1,53 @@
+name: Link Issue
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  link-issue:
+    name: Auto-link issue
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Extract issue number from branch and link
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.pull_request.head.ref;
+            const match = branch.match(/(\d+)/);
+            if (!match) {
+              console.log('No issue number found in branch name');
+              return;
+            }
+            const issueNumber = parseInt(match[1], 10);
+
+            // Verify issue exists
+            try {
+              await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+              });
+            } catch {
+              console.log(`Issue #${issueNumber} not found, skipping`);
+              return;
+            }
+
+            // Add "Closes #N" to PR body
+            const pr = context.payload.pull_request;
+            const currentBody = pr.body || '';
+            if (currentBody.includes(`#${issueNumber}`)) {
+              console.log(`PR body already references #${issueNumber}`);
+              return;
+            }
+
+            const newBody = currentBody + `\n\nCloses #${issueNumber}`;
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              body: newBody,
+            });
+            console.log(`Linked PR to issue #${issueNumber}`);
