@@ -51,6 +51,7 @@ pub async fn send_email(
         account_id: message.account_id,
         channel: "email".into(),
         environment: message.environment.clone(),
+        attempt: 0,
     };
     crate::queue::enqueue::enqueue_job(&state, &job)
         .await

@@ -8,6 +8,46 @@ pub struct Config {
     pub host: String,
     /// Bind port.
     pub port: u16,
+    /// Number of concurrent queue workers.
+    pub worker_concurrency: usize,
+
+    // SMS providers (global defaults)
+    /// Telnyx API key.
+    pub telnyx_api_key: Option<String>,
+    /// Telnyx sender phone number.
+    pub telnyx_from: Option<String>,
+    /// Twilio account SID.
+    pub twilio_account_sid: Option<String>,
+    /// Twilio auth token.
+    pub twilio_auth_token: Option<String>,
+    /// Twilio sender phone number.
+    pub twilio_from: Option<String>,
+    /// Plivo auth ID.
+    pub plivo_auth_id: Option<String>,
+    /// Plivo auth token.
+    pub plivo_auth_token: Option<String>,
+    /// Plivo sender phone number.
+    pub plivo_from: Option<String>,
+
+    // Email providers (global defaults)
+    /// Resend API key.
+    pub resend_api_key: Option<String>,
+    /// AWS SES access key.
+    pub ses_access_key: Option<String>,
+    /// AWS SES secret key.
+    pub ses_secret_key: Option<String>,
+    /// AWS SES region.
+    pub ses_region: Option<String>,
+    /// SMTP server host.
+    pub smtp_host: Option<String>,
+    /// SMTP server port.
+    pub smtp_port: Option<u16>,
+    /// SMTP username.
+    pub smtp_username: Option<String>,
+    /// SMTP password.
+    pub smtp_password: Option<String>,
+    /// Default sender email address.
+    pub from_email: Option<String>,
 }
 
 impl Config {
@@ -23,6 +63,29 @@ impl Config {
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(3000),
+            worker_concurrency: std::env::var("WORKER_CONCURRENCY")
+                .ok()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(4),
+
+            telnyx_api_key: std::env::var("TELNYX_API_KEY").ok(),
+            telnyx_from: std::env::var("TELNYX_FROM").ok(),
+            twilio_account_sid: std::env::var("TWILIO_ACCOUNT_SID").ok(),
+            twilio_auth_token: std::env::var("TWILIO_AUTH_TOKEN").ok(),
+            twilio_from: std::env::var("TWILIO_FROM").ok(),
+            plivo_auth_id: std::env::var("PLIVO_AUTH_ID").ok(),
+            plivo_auth_token: std::env::var("PLIVO_AUTH_TOKEN").ok(),
+            plivo_from: std::env::var("PLIVO_FROM").ok(),
+
+            resend_api_key: std::env::var("RESEND_API_KEY").ok(),
+            ses_access_key: std::env::var("AWS_SES_ACCESS_KEY").ok(),
+            ses_secret_key: std::env::var("AWS_SES_SECRET_KEY").ok(),
+            ses_region: std::env::var("AWS_SES_REGION").ok(),
+            smtp_host: std::env::var("SMTP_HOST").ok(),
+            smtp_port: std::env::var("SMTP_PORT").ok().and_then(|p| p.parse().ok()),
+            smtp_username: std::env::var("SMTP_USERNAME").ok(),
+            smtp_password: std::env::var("SMTP_PASSWORD").ok(),
+            from_email: std::env::var("FROM_EMAIL").ok(),
         }
     }
 }

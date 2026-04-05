@@ -12,7 +12,8 @@ use uuid::Uuid;
 use chorus_server::app::{create_router, AppState};
 use chorus_server::db::{
     Account, AccountRepository, ApiKey, ApiKeyRepository, DbError, DeliveryEvent, Message,
-    MessageRepository, NewMessage, Pagination,
+    MessageRepository, NewMessage, NewProviderConfig, Pagination, ProviderConfig,
+    ProviderConfigRepository,
 };
 
 // ---------------------------------------------------------------------------
@@ -161,6 +162,40 @@ impl ApiKeyRepository for MockApiKeyRepo {
     }
 }
 
+struct MockProviderConfigRepo;
+
+#[async_trait]
+impl ProviderConfigRepository for MockProviderConfigRepo {
+    async fn list_by_account_channel(
+        &self,
+        _account_id: Uuid,
+        _channel: &str,
+    ) -> Result<Vec<ProviderConfig>, DbError> {
+        Ok(vec![])
+    }
+
+    async fn insert(&self, config: &NewProviderConfig) -> Result<ProviderConfig, DbError> {
+        Ok(ProviderConfig {
+            id: Uuid::new_v4(),
+            account_id: config.account_id,
+            channel: config.channel.clone(),
+            provider: config.provider.clone(),
+            priority: config.priority,
+            credentials: config.credentials.clone(),
+            is_active: true,
+            created_at: Utc::now(),
+        })
+    }
+
+    async fn list_by_account(&self, _account_id: Uuid) -> Result<Vec<ProviderConfig>, DbError> {
+        Ok(vec![])
+    }
+
+    async fn delete(&self, _id: Uuid, _account_id: Uuid) -> Result<(), DbError> {
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
@@ -198,6 +233,7 @@ fn test_state() -> Arc<AppState> {
 
     let message_repo = Arc::new(MockMessageRepo::new());
     let api_key_repo = Arc::new(MockApiKeyRepo);
+    let provider_config_repo = Arc::new(MockProviderConfigRepo);
 
     // Use a dummy Redis URL — tests that hit Redis will fail,
     // but auth + DB-only tests will work
@@ -208,6 +244,7 @@ fn test_state() -> Arc<AppState> {
         account_repo,
         message_repo,
         api_key_repo,
+        provider_config_repo,
     ))
 }
 
@@ -324,4 +361,25 @@ async fn keys_list_returns_200() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn providers_list_returns_200() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/providers")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = response_body(resp).await;
+    assert!(body.as_array().unwrap().is_empty());
 }
