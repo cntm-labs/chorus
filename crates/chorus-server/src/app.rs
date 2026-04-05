@@ -93,5 +93,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/v1/keys/{id}", delete(routes::keys::revoke_key))
         .route("/v1/otp/send", post(routes::otp::send_otp))
         .route("/v1/otp/verify", post(routes::otp::verify_otp))
+        .route(
+            "/v1/providers",
+            get(routes::provider_configs::list_provider_configs)
+                .post(routes::provider_configs::create_provider_config),
+        )
+        .route(
+            "/v1/providers/{id}",
+            delete(routes::provider_configs::delete_provider_config),
+        )
         .with_state(state)
 }
