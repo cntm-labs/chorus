@@ -1,28 +1,37 @@
 use thiserror::Error;
 
+/// Errors that can occur during Chorus operations.
 #[derive(Debug, Error)]
 pub enum ChorusError {
+    /// A specific provider returned an error.
     #[error("provider error ({provider}): {message}")]
     Provider { provider: String, message: String },
 
+    /// All configured providers failed to deliver the message.
     #[error("all providers failed")]
     AllProvidersFailed,
 
+    /// Input validation failed (e.g., missing required field).
     #[error("validation error: {0}")]
     Validation(String),
 
+    /// The requested template slug was not found.
     #[error("template not found: {0}")]
     TemplateNotFound(String),
 
+    /// Account quota has been exceeded.
     #[error("quota exceeded: {0}")]
     QuotaExceeded(String),
 
+    /// The provided API key is invalid.
     #[error("invalid api key")]
     InvalidApiKey,
 
+    /// Request was rate limited. Retry after the specified duration.
     #[error("rate limited")]
     RateLimited { retry_after_secs: u64 },
 
+    /// An unexpected internal error occurred.
     #[error("internal error: {0}")]
     Internal(#[from] anyhow::Error),
 }
