@@ -1,4 +1,5 @@
 pub mod enqueue;
+pub mod router_builder;
 pub mod worker;
 
 use serde::{Deserialize, Serialize};
