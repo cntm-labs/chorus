@@ -34,6 +34,7 @@ services:
       REDIS_URL: redis://redis:6379
       HOST: 0.0.0.0
       PORT: "3000"
+      WORKER_CONCURRENCY: "4"
       RUST_LOG: chorus_server=debug,tower_http=debug
     depends_on:
       postgres:
