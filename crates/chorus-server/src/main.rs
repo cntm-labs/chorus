@@ -1,8 +1,13 @@
 mod app;
+mod auth;
 mod config;
+mod db;
+mod queue;
+mod routes;
 
 use app::{AppState, create_router};
 use config::Config;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -22,7 +27,12 @@ async fn main() -> anyhow::Result<()> {
 
     let redis = redis::Client::open(config.redis_url.as_str())?;
 
-    let state = AppState { db, redis };
+    let state = AppState::new(db, redis);
+    let state = Arc::new(state);
+
+    // Spawn background queue worker
+    queue::worker::spawn_worker(Arc::clone(&state));
+
     let app = create_router(state);
 
     let addr = format!("{}:{}", config.host, config.port);
