@@ -1,0 +1,15 @@
+enhancement:
+  - changed-files:
+      - any-glob-to-any-file: 'crates/*/src/**'
+
+server:
+  - changed-files:
+      - any-glob-to-any-file: 'crates/chorus-server/**'
+
+providers:
+  - changed-files:
+      - any-glob-to-any-file: 'crates/chorus-providers/**'
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: ['docs/**', '*.md']
