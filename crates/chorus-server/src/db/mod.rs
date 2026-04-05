@@ -1,4 +1,5 @@
 pub mod postgres;
+pub mod provider_config;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -137,6 +138,48 @@ pub trait MessageRepository: Send + Sync {
 
     /// Get all delivery events for a message.
     async fn get_delivery_events(&self, message_id: Uuid) -> Result<Vec<DeliveryEvent>, DbError>;
+}
+
+/// A provider configuration for per-account routing.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ProviderConfig {
+    pub id: Uuid,
+    pub account_id: Uuid,
+    pub channel: String,
+    pub provider: String,
+    pub priority: i32,
+    pub credentials: serde_json::Value,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Parameters for inserting a new provider config.
+pub struct NewProviderConfig {
+    pub account_id: Uuid,
+    pub channel: String,
+    pub provider: String,
+    pub priority: i32,
+    pub credentials: serde_json::Value,
+}
+
+/// Per-account provider configuration management.
+#[async_trait]
+pub trait ProviderConfigRepository: Send + Sync {
+    /// List active provider configs for an account+channel, ordered by priority.
+    async fn list_by_account_channel(
+        &self,
+        account_id: Uuid,
+        channel: &str,
+    ) -> Result<Vec<ProviderConfig>, DbError>;
+
+    /// Insert a new provider config.
+    async fn insert(&self, config: &NewProviderConfig) -> Result<ProviderConfig, DbError>;
+
+    /// List all provider configs for an account.
+    async fn list_by_account(&self, account_id: Uuid) -> Result<Vec<ProviderConfig>, DbError>;
+
+    /// Delete a provider config.
+    async fn delete(&self, id: Uuid, account_id: Uuid) -> Result<(), DbError>;
 }
 
 /// API key management operations.
