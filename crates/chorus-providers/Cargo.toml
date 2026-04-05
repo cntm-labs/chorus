@@ -1,12 +1,18 @@
 [package]
 name = "chorus-providers"
-version = "0.1.0"
+version = "0.1.0-beta"
 edition = "2021"
 license = "MIT"
-description = "SMS and Email provider implementations for Chorus CPaaS"
+description = "SMS and Email provider implementations for Chorus CPaaS — Telnyx, Twilio, Plivo, Resend, SES, SMTP"
+repository = "https://github.com/cntm-labs/chorus"
+homepage = "https://github.com/cntm-labs/chorus"
+keywords = ["sms", "email", "twilio", "telnyx", "plivo"]
+categories = ["api-bindings", "network-programming"]
+readme = "README.md"
+rust-version = "1.85.0"
 
 [dependencies]
-chorus-core = { path = "../chorus-core", version = "0.1.0" }
+chorus-core = { path = "../chorus-core", version = "0.1.0-beta" }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
