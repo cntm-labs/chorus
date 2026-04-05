@@ -1,0 +1,31 @@
+[package]
+name = "chorus-server"
+version = "0.1.1"
+edition = "2021"
+license = "MIT"
+description = "Axum REST API server for Chorus CPaaS"
+
+[dependencies]
+chorus-core = { path = "../chorus-core" }
+chorus-providers = { path = "../chorus-providers" }
+axum = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+redis = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+dotenvy = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+async-trait = { workspace = true }
+
+[lints]
+workspace = true
