@@ -13,6 +13,9 @@
 [![crates.io chorus-providers](https://img.shields.io/crates/v/chorus-providers?label=chorus-providers&color=fc8d62)](https://crates.io/crates/chorus-providers)
 [![docs.rs](https://img.shields.io/docsrs/chorus-core?label=docs.rs)](https://docs.rs/chorus-core)
 
+[![Rust](https://img.shields.io/badge/Rust-2k_LOC-dea584?logo=rust&logoColor=white)](crates/)
+[![Total Lines](https://img.shields.io/badge/Total-2k+_LOC-blue)](./)
+
 [![Rust](https://img.shields.io/badge/Rust-dea584?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Axum](https://img.shields.io/badge/Axum-dea584?logo=rust&logoColor=white)](https://github.com/tokio-rs/axum)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
