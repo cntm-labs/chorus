@@ -37,6 +37,15 @@ chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 url = "2"
 
+# Template engine
+minijinja = "2"
+
+# DNS resolution
+hickory-resolver = "0.25"
+
+# Testing
+wiremock = "0.6"
+
 # Email (SMTP)
 lettre = { version = "0.11", features = ["tokio1-native-tls"] }
 

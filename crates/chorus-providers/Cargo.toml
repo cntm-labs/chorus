@@ -24,5 +24,9 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 lettre = { workspace = true }
 
+[dev-dependencies]
+wiremock = { workspace = true }
+tokio = { workspace = true }
+
 [lints]
 workspace = true

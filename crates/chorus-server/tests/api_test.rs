@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 // Re-use types from chorus-server
 use chorus_server::app::{create_router, AppState};
+use chorus_server::config::Config;
 use chorus_server::db::{
     Account, AccountRepository, ApiKey, ApiKeyRepository, DbError, DeliveryEvent, Message,
     MessageRepository, NewMessage, NewProviderConfig, Pagination, ProviderConfig,
@@ -239,8 +240,10 @@ fn test_state() -> Arc<AppState> {
     // but auth + DB-only tests will work
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
 
+    let config = Arc::new(Config::from_env());
     Arc::new(AppState::with_repos(
         redis,
+        config,
         account_repo,
         message_repo,
         api_key_repo,

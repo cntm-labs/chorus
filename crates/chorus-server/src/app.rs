@@ -3,6 +3,7 @@ use axum::Router;
 use sqlx::PgPool;
 use std::sync::Arc;
 
+use crate::config::Config;
 use crate::db::postgres::PgRepository;
 use crate::db::provider_config::PgProviderConfigRepository;
 use crate::db::{AccountRepository, ApiKeyRepository, MessageRepository, ProviderConfigRepository};
@@ -14,6 +15,8 @@ pub struct AppState {
     pub db: Option<PgPool>,
     /// Redis client for queue, caching, and OTP.
     pub redis: redis::Client,
+    /// Server configuration.
+    config: Arc<Config>,
     /// Account + API key repository.
     account_repo: Arc<dyn AccountRepository>,
     /// Message repository.
@@ -26,12 +29,13 @@ pub struct AppState {
 
 impl AppState {
     /// Create app state backed by PostgreSQL.
-    pub fn new(db: PgPool, redis: redis::Client) -> Self {
+    pub fn new(db: PgPool, redis: redis::Client, config: Arc<Config>) -> Self {
         let repo = Arc::new(PgRepository::new(db.clone()));
         let provider_config_repo = Arc::new(PgProviderConfigRepository::new(db.clone()));
         Self {
             db: Some(db),
             redis,
+            config,
             account_repo: repo.clone(),
             message_repo: repo.clone(),
             api_key_repo: repo,
@@ -42,6 +46,7 @@ impl AppState {
     /// Create app state with custom repositories (for testing).
     pub fn with_repos(
         redis: redis::Client,
+        config: Arc<Config>,
         account_repo: Arc<dyn AccountRepository>,
         message_repo: Arc<dyn MessageRepository>,
         api_key_repo: Arc<dyn ApiKeyRepository>,
@@ -50,6 +55,7 @@ impl AppState {
         Self {
             db: None,
             redis,
+            config,
             account_repo,
             message_repo,
             api_key_repo,
@@ -75,6 +81,11 @@ impl AppState {
     /// Access the provider config repository.
     pub fn provider_config_repo(&self) -> Arc<dyn ProviderConfigRepository> {
         Arc::clone(&self.provider_config_repo)
+    }
+
+    /// Access the server configuration.
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 }
 
@@ -102,5 +113,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/v1/providers/{id}",
             delete(routes::provider_configs::delete_provider_config),
         )
+        .route("/internal/bounces", post(routes::internal::handle_bounce))
+        .route("/internal/dns-check", get(routes::internal::dns_check))
         .with_state(state)
 }

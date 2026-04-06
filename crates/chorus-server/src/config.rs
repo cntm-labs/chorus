@@ -48,6 +48,9 @@ pub struct Config {
     pub smtp_password: Option<String>,
     /// Default sender email address.
     pub from_email: Option<String>,
+
+    /// Shared secret for chorus-mail bounce webhook.
+    pub bounce_secret: Option<String>,
 }
 
 impl Config {
@@ -86,6 +89,8 @@ impl Config {
             smtp_username: std::env::var("SMTP_USERNAME").ok(),
             smtp_password: std::env::var("SMTP_PASSWORD").ok(),
             from_email: std::env::var("FROM_EMAIL").ok(),
+
+            bounce_secret: std::env::var("BOUNCE_SECRET").ok(),
         }
     }
 }

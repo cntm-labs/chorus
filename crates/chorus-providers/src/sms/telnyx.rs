@@ -9,6 +9,7 @@ pub struct TelnyxSmsSender {
     api_key: String,
     from: Option<String>,
     http_client: reqwest::Client,
+    base_url: String,
 }
 
 impl TelnyxSmsSender {
@@ -17,7 +18,14 @@ impl TelnyxSmsSender {
             api_key,
             from,
             http_client: reqwest::Client::new(),
+            base_url: "https://api.telnyx.com".into(),
         }
+    }
+
+    #[cfg(test)]
+    fn with_base_url(mut self, base_url: String) -> Self {
+        self.base_url = base_url;
+        self
     }
 }
 
@@ -29,6 +37,21 @@ struct TelnyxResponse {
 #[derive(Deserialize)]
 struct TelnyxMessageData {
     id: String,
+}
+
+#[derive(Deserialize)]
+struct TelnyxStatusResponse {
+    data: TelnyxStatusData,
+}
+
+#[derive(Deserialize)]
+struct TelnyxStatusData {
+    to: Vec<TelnyxRecipientStatus>,
+}
+
+#[derive(Deserialize)]
+struct TelnyxRecipientStatus {
+    status: String,
 }
 
 #[async_trait]
@@ -50,7 +73,7 @@ impl SmsSender for TelnyxSmsSender {
 
         let resp = self
             .http_client
-            .post("https://api.telnyx.com/v2/messages")
+            .post(format!("{}/v2/messages", self.base_url))
             .bearer_auth(&self.api_key)
             .json(&payload)
             .send()
@@ -82,8 +105,54 @@ impl SmsSender for TelnyxSmsSender {
         })
     }
 
-    async fn check_status(&self, _message_id: &str) -> Result<DeliveryStatus, ChorusError> {
-        Ok(DeliveryStatus::Sent)
+    async fn check_status(&self, message_id: &str) -> Result<DeliveryStatus, ChorusError> {
+        let url = format!("{}/v2/messages/{}", self.base_url, message_id);
+
+        let resp = self
+            .http_client
+            .get(&url)
+            .bearer_auth(&self.api_key)
+            .send()
+            .await
+            .map_err(|e| ChorusError::Provider {
+                provider: "telnyx".into(),
+                message: format!("HTTP error: {}", e),
+            })?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ChorusError::Provider {
+                provider: "telnyx".into(),
+                message: format!("status check failed: {}", body),
+            });
+        }
+
+        let status_resp: TelnyxStatusResponse =
+            resp.json().await.map_err(|e| ChorusError::Provider {
+                provider: "telnyx".into(),
+                message: format!("parse error: {}", e),
+            })?;
+
+        let status = status_resp
+            .data
+            .to
+            .first()
+            .map(|r| r.status.as_str())
+            .unwrap_or("unknown");
+
+        Ok(map_telnyx_status(status))
+    }
+}
+
+fn map_telnyx_status(status: &str) -> DeliveryStatus {
+    match status {
+        "delivered" => DeliveryStatus::Delivered,
+        "sent" => DeliveryStatus::Delivered,
+        "sending_failed" => DeliveryStatus::Failed {
+            reason: format!("telnyx status: {}", status),
+        },
+        "queued" | "sending" => DeliveryStatus::Sent,
+        _ => DeliveryStatus::Sent,
     }
 }
 
@@ -107,5 +176,79 @@ mod tests {
         };
         let result = sender.send(&msg).await;
         assert!(matches!(result, Err(ChorusError::Validation(_))));
+    }
+
+    #[test]
+    fn map_status_delivered() {
+        assert!(matches!(
+            map_telnyx_status("delivered"),
+            DeliveryStatus::Delivered
+        ));
+        assert!(matches!(
+            map_telnyx_status("sent"),
+            DeliveryStatus::Delivered
+        ));
+    }
+
+    #[test]
+    fn map_status_failed() {
+        assert!(matches!(
+            map_telnyx_status("sending_failed"),
+            DeliveryStatus::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn map_status_sent() {
+        assert!(matches!(map_telnyx_status("queued"), DeliveryStatus::Sent));
+        assert!(matches!(map_telnyx_status("sending"), DeliveryStatus::Sent));
+    }
+
+    #[test]
+    fn map_status_unknown_defaults_to_sent() {
+        assert!(matches!(
+            map_telnyx_status("something_else"),
+            DeliveryStatus::Sent
+        ));
+    }
+
+    #[tokio::test]
+    async fn check_status_returns_delivered() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v2/messages/msg-123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "to": [{"status": "delivered"}]
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let sender = TelnyxSmsSender::new("fake-key".into(), Some("+1".into()))
+            .with_base_url(mock_server.uri());
+        let status = sender.check_status("msg-123").await.unwrap();
+        assert!(matches!(status, DeliveryStatus::Delivered));
+    }
+
+    #[tokio::test]
+    async fn check_status_returns_error_on_failure() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v2/messages/msg-999"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("error"))
+            .mount(&mock_server)
+            .await;
+
+        let sender = TelnyxSmsSender::new("fake-key".into(), Some("+1".into()))
+            .with_base_url(mock_server.uri());
+        let result = sender.check_status("msg-999").await;
+        assert!(matches!(result, Err(ChorusError::Provider { .. })));
     }
 }

@@ -13,13 +13,14 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let config = Arc::new(Config::from_env());
+    let config = Config::from_env();
 
     let db = sqlx::PgPool::connect(&config.database_url).await?;
     sqlx::migrate!("src/db/migrations").run(&db).await?;
 
     let redis = redis::Client::open(config.redis_url.as_str())?;
-    let state = AppState::new(db, redis);
+    let config = Arc::new(config);
+    let state = AppState::new(db, redis, Arc::clone(&config));
     let state = Arc::new(state);
 
     // Spawn background queue workers and delayed poller

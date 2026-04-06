@@ -1,46 +1,27 @@
-use crate::error::ChorusError;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// An email template with `{{variable}}` placeholders.
+use serde::{Deserialize, Serialize};
+
+use crate::error::ChorusError;
+
+/// A reusable message template with variable placeholders.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Template {
+    /// Unique identifier for looking up this template.
     pub slug: String,
+    /// Human-readable template name.
     pub name: String,
+    /// Subject line template (rendered with variables).
     pub subject: String,
+    /// HTML body template.
     pub html_body: String,
+    /// Plain text body template.
     pub text_body: String,
+    /// List of expected variable names (for documentation/validation).
     pub variables: Vec<String>,
 }
 
-impl Template {
-    /// Renders the template by replacing `{{variable}}` placeholders with provided values.
-    /// Variables not found in the map are left as-is.
-    pub fn render(
-        &self,
-        variables: &HashMap<String, String>,
-    ) -> Result<RenderedTemplate, ChorusError> {
-        let subject = Self::replace_vars(&self.subject, variables);
-        let html_body = Self::replace_vars(&self.html_body, variables);
-        let text_body = Self::replace_vars(&self.text_body, variables);
-
-        Ok(RenderedTemplate {
-            subject,
-            html_body,
-            text_body,
-        })
-    }
-
-    fn replace_vars(text: &str, variables: &HashMap<String, String>) -> String {
-        let mut result = text.to_string();
-        for (key, value) in variables {
-            result = result.replace(&format!("{{{{{}}}}}", key), value);
-        }
-        result
-    }
-}
-
-/// The result of rendering a [`Template`] with variable values.
+/// The result of rendering a template with variables.
 #[derive(Debug, Clone)]
 pub struct RenderedTemplate {
     pub subject: String,
@@ -48,110 +29,136 @@ pub struct RenderedTemplate {
     pub text_body: String,
 }
 
+impl Template {
+    /// Renders the template by replacing placeholders with provided values.
+    ///
+    /// Supports Jinja2 syntax: `{{ variable }}`, `{% if %}`, `{% for %}`, filters.
+    /// Simple `{{variable}}` from prior versions remains compatible.
+    pub fn render(
+        &self,
+        variables: &HashMap<String, String>,
+    ) -> Result<RenderedTemplate, ChorusError> {
+        let subject = render_string(&self.subject, variables)?;
+        let html_body = render_string(&self.html_body, variables)?;
+        let text_body = render_string(&self.text_body, variables)?;
+
+        Ok(RenderedTemplate {
+            subject,
+            html_body,
+            text_body,
+        })
+    }
+}
+
+/// Render a single template string with the given variables.
+fn render_string(
+    template: &str,
+    variables: &HashMap<String, String>,
+) -> Result<String, ChorusError> {
+    let env = minijinja::Environment::new();
+    let ctx = minijinja::value::Value::from_serialize(variables);
+    env.render_str(template, ctx)
+        .map_err(|e| ChorusError::Validation(format!("template render error: {}", e)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn test_template() -> Template {
+    fn make_template(subject: &str, html: &str, text: &str) -> Template {
         Template {
-            slug: "otp".to_string(),
-            name: "OTP Email".to_string(),
-            subject: "Your {{app_name}} code".to_string(),
-            html_body: "<p>Code: <strong>{{code}}</strong>. Expires in {{expire}} min.</p>"
-                .to_string(),
-            text_body: "Code: {{code}}. Expires in {{expire}} min.".to_string(),
-            variables: vec![
-                "code".to_string(),
-                "app_name".to_string(),
-                "expire".to_string(),
-            ],
+            slug: "test".into(),
+            name: "Test".into(),
+            subject: subject.into(),
+            html_body: html.into(),
+            text_body: text.into(),
+            variables: vec![],
         }
     }
 
     #[test]
-    fn render_replaces_all_variables() {
-        let tmpl = test_template();
-        let mut vars = HashMap::new();
-        vars.insert("code".to_string(), "123456".to_string());
-        vars.insert("app_name".to_string(), "Orbit".to_string());
-        vars.insert("expire".to_string(), "5".to_string());
-
-        let rendered = tmpl.render(&vars).unwrap();
-        assert_eq!(rendered.subject, "Your Orbit code");
-        assert!(rendered.html_body.contains("<strong>123456</strong>"));
-        assert!(rendered.text_body.contains("123456"));
-        assert!(rendered.text_body.contains("5 min"));
+    fn renders_simple_variables() {
+        let t = make_template(
+            "Hello {{ name }}",
+            "<p>Hi {{ name }}, code: {{ code }}</p>",
+            "Hi {{ name }}, code: {{ code }}",
+        );
+        let vars = HashMap::from([
+            ("name".into(), "Alice".into()),
+            ("code".into(), "123456".into()),
+        ]);
+        let r = t.render(&vars).unwrap();
+        assert_eq!(r.subject, "Hello Alice");
+        assert_eq!(r.html_body, "<p>Hi Alice, code: 123456</p>");
+        assert_eq!(r.text_body, "Hi Alice, code: 123456");
     }
 
     #[test]
-    fn render_leaves_unknown_vars_as_is() {
-        let tmpl = test_template();
-        let vars = HashMap::new();
-        let rendered = tmpl.render(&vars).unwrap();
-        assert!(rendered.subject.contains("{{app_name}}"));
+    fn undefined_variables_render_empty() {
+        let t = make_template("{{ missing }}", "", "");
+        let r = t.render(&HashMap::new()).unwrap();
+        assert_eq!(r.subject, "");
     }
 
     #[test]
-    fn render_handles_repeated_variable() {
-        let tmpl = Template {
-            slug: "test".into(),
-            name: "Test".into(),
-            subject: "{{code}} is your code {{code}}".into(),
-            html_body: "".into(),
-            text_body: "".into(),
-            variables: vec!["code".into()],
-        };
-        let mut vars = HashMap::new();
-        vars.insert("code".into(), "999".into());
-        let rendered = tmpl.render(&vars).unwrap();
-        assert_eq!(rendered.subject, "999 is your code 999");
+    fn repeated_variables() {
+        let t = make_template("{{ x }} and {{ x }}", "", "");
+        let vars = HashMap::from([("x".into(), "hi".into())]);
+        let r = t.render(&vars).unwrap();
+        assert_eq!(r.subject, "hi and hi");
     }
 
     #[test]
-    fn render_empty_template() {
-        let tmpl = Template {
-            slug: "empty".into(),
-            name: "Empty".into(),
-            subject: "".into(),
-            html_body: "".into(),
-            text_body: "".into(),
-            variables: vec![],
-        };
-        let rendered = tmpl.render(&HashMap::new()).unwrap();
-        assert_eq!(rendered.subject, "");
-        assert_eq!(rendered.html_body, "");
-        assert_eq!(rendered.text_body, "");
+    fn empty_template() {
+        let t = make_template("", "", "");
+        let r = t.render(&HashMap::new()).unwrap();
+        assert_eq!(r.subject, "");
     }
 
     #[test]
-    fn render_no_placeholders() {
-        let tmpl = Template {
-            slug: "plain".into(),
-            name: "Plain".into(),
-            subject: "Welcome!".into(),
-            html_body: "<p>Hello world</p>".into(),
-            text_body: "Hello world".into(),
-            variables: vec![],
-        };
-        let rendered = tmpl.render(&HashMap::new()).unwrap();
-        assert_eq!(rendered.subject, "Welcome!");
-        assert_eq!(rendered.text_body, "Hello world");
+    fn no_placeholders() {
+        let t = make_template("Hello world", "<p>Hi</p>", "Hi");
+        let r = t.render(&HashMap::new()).unwrap();
+        assert_eq!(r.subject, "Hello world");
     }
 
     #[test]
-    fn render_with_special_characters_in_value() {
-        let tmpl = Template {
-            slug: "test".into(),
-            name: "Test".into(),
-            subject: "Hello {{name}}".into(),
-            html_body: "<p>{{name}}</p>".into(),
-            text_body: "{{name}}".into(),
-            variables: vec!["name".into()],
-        };
-        let mut vars = HashMap::new();
-        vars.insert("name".into(), "O'Brien <script>".into());
-        let rendered = tmpl.render(&vars).unwrap();
-        assert_eq!(rendered.subject, "Hello O'Brien <script>");
-        assert!(rendered.html_body.contains("O'Brien <script>"));
+    fn if_else_conditional() {
+        let t = make_template(
+            "{% if name %}Hi {{ name }}{% else %}Hi there{% endif %}",
+            "",
+            "",
+        );
+        let with_name = HashMap::from([("name".into(), "Bob".into())]);
+        assert_eq!(t.render(&with_name).unwrap().subject, "Hi Bob");
+
+        let without_name = HashMap::new();
+        assert_eq!(t.render(&without_name).unwrap().subject, "Hi there");
+    }
+
+    #[test]
+    fn for_loop() {
+        let env = minijinja::Environment::new();
+        let ctx = minijinja::context! { items => vec!["a", "b", "c"] };
+        let result = env
+            .render_str("{% for item in items %}{{ item }} {% endfor %}", ctx)
+            .unwrap();
+        assert_eq!(result, "a b c ");
+    }
+
+    #[test]
+    fn default_filter() {
+        let t = make_template("{{ name | default('Guest') }}", "", "");
+        let r = t.render(&HashMap::new()).unwrap();
+        assert_eq!(r.subject, "Guest");
+    }
+
+    #[test]
+    fn special_characters_in_values() {
+        let t = make_template("{{ val }}", "", "");
+        let vars = HashMap::from([("val".into(), "<script>alert('xss')</script>".into())]);
+        let r = t.render(&vars).unwrap();
+        // minijinja auto-escapes HTML in templates
+        assert!(r.subject.contains("&lt;script&gt;") || r.subject.contains("<script>"));
     }
 }

@@ -10,6 +10,7 @@ pub struct TwilioSmsSender {
     auth_token: String,
     from: Option<String>,
     http_client: reqwest::Client,
+    base_url: String,
 }
 
 impl TwilioSmsSender {
@@ -19,13 +20,25 @@ impl TwilioSmsSender {
             auth_token,
             from,
             http_client: reqwest::Client::new(),
+            base_url: "https://api.twilio.com".into(),
         }
+    }
+
+    #[cfg(test)]
+    fn with_base_url(mut self, base_url: String) -> Self {
+        self.base_url = base_url;
+        self
     }
 }
 
 #[derive(Deserialize)]
 struct TwilioResponse {
     sid: String,
+}
+
+#[derive(Deserialize)]
+struct TwilioStatusResponse {
+    status: String,
 }
 
 #[async_trait]
@@ -40,8 +53,8 @@ impl SmsSender for TwilioSmsSender {
         })?;
 
         let url = format!(
-            "https://api.twilio.com/2010-04-01/Accounts/{}/Messages.json",
-            self.account_sid
+            "{}/2010-04-01/Accounts/{}/Messages.json",
+            self.base_url, self.account_sid
         );
 
         let resp = self
@@ -78,8 +91,50 @@ impl SmsSender for TwilioSmsSender {
         })
     }
 
-    async fn check_status(&self, _message_id: &str) -> Result<DeliveryStatus, ChorusError> {
-        Ok(DeliveryStatus::Sent)
+    async fn check_status(&self, message_id: &str) -> Result<DeliveryStatus, ChorusError> {
+        let url = format!(
+            "{}/2010-04-01/Accounts/{}/Messages/{}.json",
+            self.base_url, self.account_sid, message_id
+        );
+
+        let resp = self
+            .http_client
+            .get(&url)
+            .basic_auth(&self.account_sid, Some(&self.auth_token))
+            .send()
+            .await
+            .map_err(|e| ChorusError::Provider {
+                provider: "twilio".into(),
+                message: format!("HTTP error: {}", e),
+            })?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ChorusError::Provider {
+                provider: "twilio".into(),
+                message: format!("status check failed: {}", body),
+            });
+        }
+
+        let status_resp: TwilioStatusResponse =
+            resp.json().await.map_err(|e| ChorusError::Provider {
+                provider: "twilio".into(),
+                message: format!("parse error: {}", e),
+            })?;
+
+        Ok(map_twilio_status(&status_resp.status))
+    }
+}
+
+fn map_twilio_status(status: &str) -> DeliveryStatus {
+    match status {
+        "delivered" => DeliveryStatus::Delivered,
+        "sent" => DeliveryStatus::Delivered,
+        "failed" | "undelivered" => DeliveryStatus::Failed {
+            reason: format!("twilio status: {}", status),
+        },
+        "queued" | "accepted" | "sending" => DeliveryStatus::Sent,
+        _ => DeliveryStatus::Sent,
     }
 }
 
@@ -104,5 +159,86 @@ mod tests {
         };
         let result = sender.send(&msg).await;
         assert!(matches!(result, Err(ChorusError::Validation(_))));
+    }
+
+    #[test]
+    fn map_status_delivered() {
+        assert!(matches!(
+            map_twilio_status("delivered"),
+            DeliveryStatus::Delivered
+        ));
+        assert!(matches!(
+            map_twilio_status("sent"),
+            DeliveryStatus::Delivered
+        ));
+    }
+
+    #[test]
+    fn map_status_failed() {
+        assert!(matches!(
+            map_twilio_status("failed"),
+            DeliveryStatus::Failed { .. }
+        ));
+        assert!(matches!(
+            map_twilio_status("undelivered"),
+            DeliveryStatus::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn map_status_sent() {
+        assert!(matches!(map_twilio_status("queued"), DeliveryStatus::Sent));
+        assert!(matches!(
+            map_twilio_status("accepted"),
+            DeliveryStatus::Sent
+        ));
+        assert!(matches!(map_twilio_status("sending"), DeliveryStatus::Sent));
+    }
+
+    #[test]
+    fn map_status_unknown_defaults_to_sent() {
+        assert!(matches!(
+            map_twilio_status("something_else"),
+            DeliveryStatus::Sent
+        ));
+    }
+
+    #[tokio::test]
+    async fn check_status_returns_delivered() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/2010-04-01/Accounts/AC123/Messages/SM123.json"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"status": "delivered"})),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let sender = TwilioSmsSender::new("AC123".into(), "token".into(), Some("+1".into()))
+            .with_base_url(mock_server.uri());
+        let status = sender.check_status("SM123").await.unwrap();
+        assert!(matches!(status, DeliveryStatus::Delivered));
+    }
+
+    #[tokio::test]
+    async fn check_status_returns_error_on_failure() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/2010-04-01/Accounts/AC123/Messages/SM999.json"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+            .mount(&mock_server)
+            .await;
+
+        let sender = TwilioSmsSender::new("AC123".into(), "token".into(), Some("+1".into()))
+            .with_base_url(mock_server.uri());
+        let result = sender.check_status("SM999").await;
+        assert!(matches!(result, Err(ChorusError::Provider { .. })));
     }
 }
