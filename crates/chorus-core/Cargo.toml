@@ -11,6 +11,9 @@ categories = ["api-bindings", "network-programming"]
 readme = "README.md"
 rust-version = "1.85.0"
 
+[lib]
+name = "chorus"
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
