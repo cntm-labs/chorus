@@ -16,11 +16,11 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use chorus_core::client::Chorus;
-//! use chorus_core::types::SmsMessage;
+//! use chorus::client::Chorus;
+//! use chorus::types::SmsMessage;
 //! use std::sync::Arc;
 //!
-//! # async fn example() -> Result<(), chorus_core::error::ChorusError> {
+//! # async fn example() -> Result<(), chorus::error::ChorusError> {
 //! let chorus = Chorus::builder()
 //!     // .add_sms_provider(Arc::new(my_provider))
 //!     .default_from_sms("+1234567890".into())
