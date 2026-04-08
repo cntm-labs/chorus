@@ -26,7 +26,7 @@ let sms = TelnyxSmsSender::new("api_key".into(), Some("+1234567890".into()));
 let email = ResendEmailSender::new("api_key".into(), "noreply@example.com".into());
 ```
 
-All providers implement `chorus_core::sms::SmsSender` or `chorus_core::email::EmailSender`.
+All providers implement `chorus::sms::SmsSender` or `chorus::email::EmailSender`.
 
 See the [main repository](https://github.com/cntm-labs/chorus) for full documentation.
 
