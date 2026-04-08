@@ -7,8 +7,8 @@ How to integrate Chorus into your authentication service for sending OTP codes, 
 Wrap Chorus in a thin adapter so your auth service depends on a local trait, not Chorus directly:
 
 ```rust
-use chorus_core::client::Chorus;
-use chorus_core::types::{SmsMessage, TemplateEmailMessage};
+use chorus::client::Chorus;
+use chorus::types::{SmsMessage, TemplateEmailMessage};
 use std::collections::HashMap;
 use std::sync::Arc;
 

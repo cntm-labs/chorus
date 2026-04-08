@@ -286,7 +286,7 @@ git commit -m "feat(server): add provider env vars and worker_concurrency to Con
 Builds a `WaterfallRouter` from per-account DB config or global env defaults. Test mode always uses mock providers.
 
 ```rust
-use chorus_core::router::WaterfallRouter;
+use chorus::router::WaterfallRouter;
 use chorus_providers::email::mock::MockEmailSender;
 use chorus_providers::email::resend::ResendEmailSender;
 use chorus_providers::email::ses::SesEmailSender;
@@ -651,7 +651,7 @@ git commit -m "feat(server): add delayed retry queue and dead letter queue"
 ### Step 1: Rewrite worker.rs
 
 ```rust
-use chorus_core::types::{EmailMessage, SmsMessage};
+use chorus::types::{EmailMessage, SmsMessage};
 use std::sync::Arc;
 
 use crate::app::AppState;

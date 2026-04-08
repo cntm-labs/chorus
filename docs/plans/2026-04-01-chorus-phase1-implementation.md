@@ -421,9 +421,9 @@ git commit -m "feat(core): add SmsSender and EmailSender traits"
 ```rust
 // crates/chorus-providers/src/sms/mock.rs
 use async_trait::async_trait;
-use chorus_core::error::ChorusError;
-use chorus_core::sms::SmsSender;
-use chorus_core::types::{Channel, DeliveryStatus, SendResult, SmsMessage};
+use chorus::error::ChorusError;
+use chorus::sms::SmsSender;
+use chorus::types::{Channel, DeliveryStatus, SendResult, SmsMessage};
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -491,9 +491,9 @@ mod tests {
 ```rust
 // crates/chorus-providers/src/email/mock.rs
 use async_trait::async_trait;
-use chorus_core::email::EmailSender;
-use chorus_core::error::ChorusError;
-use chorus_core::types::{Channel, DeliveryStatus, EmailMessage, SendResult};
+use chorus::email::EmailSender;
+use chorus::error::ChorusError;
+use chorus::types::{Channel, DeliveryStatus, EmailMessage, SendResult};
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -894,9 +894,9 @@ git commit -m "feat(core): add WaterfallRouter with email-first/SMS-fallback and
 ```rust
 // crates/chorus-providers/src/sms/telnyx.rs
 use async_trait::async_trait;
-use chorus_core::error::ChorusError;
-use chorus_core::sms::SmsSender;
-use chorus_core::types::{Channel, DeliveryStatus, SendResult, SmsMessage};
+use chorus::error::ChorusError;
+use chorus::sms::SmsSender;
+use chorus::types::{Channel, DeliveryStatus, SendResult, SmsMessage};
 use chrono::Utc;
 use serde::Deserialize;
 
@@ -1082,9 +1082,9 @@ git commit -m "feat(providers): add PlivoSmsSender"
 ```rust
 // crates/chorus-providers/src/email/resend.rs
 use async_trait::async_trait;
-use chorus_core::email::EmailSender;
-use chorus_core::error::ChorusError;
-use chorus_core::types::{Channel, DeliveryStatus, EmailMessage, SendResult};
+use chorus::email::EmailSender;
+use chorus::error::ChorusError;
+use chorus::types::{Channel, DeliveryStatus, EmailMessage, SendResult};
 use chrono::Utc;
 use serde::Deserialize;
 

@@ -41,8 +41,8 @@ Rust backend (Axum) with waterfall routing — email first (free), SMS fallback 
 ## Quick Start
 
 ```rust
-use chorus_core::client::Chorus;
-use chorus_core::types::SmsMessage;
+use chorus::client::Chorus;
+use chorus::types::SmsMessage;
 use std::sync::Arc;
 
 let chorus = Chorus::builder()

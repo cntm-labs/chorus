@@ -120,11 +120,11 @@ Replace the entire `crates/chorus-core/src/lib.rs` with:
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use chorus_core::client::Chorus;
-//! use chorus_core::types::SmsMessage;
+//! use chorus::client::Chorus;
+//! use chorus::types::SmsMessage;
 //! use std::sync::Arc;
 //!
-//! # async fn example() -> Result<(), chorus_core::error::ChorusError> {
+//! # async fn example() -> Result<(), chorus::error::ChorusError> {
 //! let chorus = Chorus::builder()
 //!     // .add_sms_provider(Arc::new(my_provider))
 //!     .default_from_sms("+1234567890".into())
@@ -386,9 +386,9 @@ Replace `crates/chorus-providers/src/lib.rs` with:
 //! | SMTP | [`email::smtp::SmtpEmailSender`] | SMTP |
 //! | Mock | [`email::mock::MockEmailSender`] | In-memory (testing) |
 //!
-//! All providers implement [`chorus_core::sms::SmsSender`] or
-//! [`chorus_core::email::EmailSender`] and can be used interchangeably
-//! with [`chorus_core::router::WaterfallRouter`].
+//! All providers implement [`chorus::sms::SmsSender`] or
+//! [`chorus::email::EmailSender`] and can be used interchangeably
+//! with [`chorus::router::WaterfallRouter`].
 
 pub mod email;
 pub mod sms;
@@ -431,8 +431,8 @@ Core traits, types, and routing engine for [Chorus](https://github.com/cntm-labs
 ## Usage
 
 ```rust
-use chorus_core::client::Chorus;
-use chorus_core::types::SmsMessage;
+use chorus::client::Chorus;
+use chorus::types::SmsMessage;
 
 let chorus = Chorus::builder()
     .add_sms_provider(my_provider)
@@ -485,7 +485,7 @@ let sms = TelnyxSmsSender::new("api_key".into(), Some("+1234567890".into()));
 let email = ResendEmailSender::new("api_key".into(), "noreply@example.com".into());
 ```
 
-All providers implement `chorus_core::sms::SmsSender` or `chorus_core::email::EmailSender`.
+All providers implement `chorus::sms::SmsSender` or `chorus::email::EmailSender`.
 
 See the [main repository](https://github.com/cntm-labs/chorus) for full documentation.
 
