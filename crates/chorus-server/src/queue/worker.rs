@@ -1,4 +1,4 @@
-use chorus_core::types::{EmailMessage, SmsMessage};
+use chorus::types::{EmailMessage, SmsMessage};
 use std::sync::Arc;
 
 use crate::app::AppState;

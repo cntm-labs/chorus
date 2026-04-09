@@ -12,8 +12,8 @@ Core traits, types, and routing engine for [Chorus](https://github.com/cntm-labs
 ## Usage
 
 ```rust
-use chorus_core::client::Chorus;
-use chorus_core::types::SmsMessage;
+use chorus::client::Chorus;
+use chorus::types::SmsMessage;
 
 let chorus = Chorus::builder()
     .add_sms_provider(my_provider)

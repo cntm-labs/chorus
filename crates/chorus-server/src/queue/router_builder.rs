@@ -1,4 +1,4 @@
-use chorus_core::router::WaterfallRouter;
+use chorus::router::WaterfallRouter;
 use chorus_providers::email::mock::MockEmailSender;
 use chorus_providers::email::resend::ResendEmailSender;
 use chorus_providers::email::ses::SesEmailSender;
