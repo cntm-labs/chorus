@@ -1,5 +1,6 @@
 pub mod postgres;
 pub mod provider_config;
+pub mod webhook;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
