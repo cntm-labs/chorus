@@ -106,4 +106,71 @@ mod tests {
         );
         assert_eq!(sender.provider_name(), "mailgun");
     }
+
+    #[tokio::test]
+    async fn mailgun_send_success() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v3/mg.example.com/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"id": "<msg-123>", "message": "Queued"})),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let sender = MailgunEmailSender::new(
+            "key-xxx".into(),
+            "mg.example.com".into(),
+            "noreply@example.com".into(),
+        )
+        .with_base_url(mock_server.uri());
+
+        let msg = EmailMessage {
+            to: "user@test.com".into(),
+            subject: "Test".into(),
+            html_body: "<p>Hi</p>".into(),
+            text_body: "Hi".into(),
+            from: None,
+        };
+
+        let result = sender.send(&msg).await.unwrap();
+        assert_eq!(result.provider, "mailgun");
+        assert_eq!(result.message_id, "<msg-123>");
+        assert!(matches!(result.status, DeliveryStatus::Sent));
+    }
+
+    #[tokio::test]
+    async fn mailgun_send_api_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v3/mg.example.com/messages"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("Forbidden"))
+            .mount(&mock_server)
+            .await;
+
+        let sender = MailgunEmailSender::new(
+            "bad-key".into(),
+            "mg.example.com".into(),
+            "noreply@example.com".into(),
+        )
+        .with_base_url(mock_server.uri());
+
+        let msg = EmailMessage {
+            to: "user@test.com".into(),
+            subject: "Test".into(),
+            html_body: "<p>Hi</p>".into(),
+            text_body: "Hi".into(),
+            from: None,
+        };
+
+        let err = sender.send(&msg).await.unwrap_err();
+        assert!(matches!(err, ChorusError::Provider { .. }));
+    }
 }
