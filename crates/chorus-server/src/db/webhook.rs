@@ -61,14 +61,13 @@ impl WebhookRepository for PgWebhookRepository {
     }
 
     async fn delete(&self, id: Uuid, account_id: Uuid) -> Result<(), DbError> {
-        let result = sqlx::query(
-            "UPDATE webhooks SET is_active = false WHERE id = $1 AND account_id = $2",
-        )
-        .bind(id)
-        .bind(account_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DbError::Internal(e.into()))?;
+        let result =
+            sqlx::query("UPDATE webhooks SET is_active = false WHERE id = $1 AND account_id = $2")
+                .bind(id)
+                .bind(account_id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| DbError::Internal(e.into()))?;
 
         if result.rows_affected() == 0 {
             return Err(DbError::NotFound);
