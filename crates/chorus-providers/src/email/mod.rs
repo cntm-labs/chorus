@@ -1,3 +1,4 @@
+pub mod mailgun;
 pub mod mock;
 pub mod resend;
 pub mod ses;
