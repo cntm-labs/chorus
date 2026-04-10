@@ -6,7 +6,11 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::db::postgres::PgRepository;
 use crate::db::provider_config::PgProviderConfigRepository;
-use crate::db::{AccountRepository, ApiKeyRepository, MessageRepository, ProviderConfigRepository};
+use crate::db::webhook::PgWebhookRepository;
+use crate::db::{
+    AccountRepository, ApiKeyRepository, MessageRepository, ProviderConfigRepository,
+    WebhookRepository,
+};
 use crate::routes;
 
 /// Shared application state accessible to all request handlers.
@@ -25,6 +29,8 @@ pub struct AppState {
     api_key_repo: Arc<dyn ApiKeyRepository>,
     /// Provider config repository.
     provider_config_repo: Arc<dyn ProviderConfigRepository>,
+    /// Webhook repository.
+    webhook_repo: Arc<dyn WebhookRepository>,
 }
 
 impl AppState {
@@ -32,6 +38,7 @@ impl AppState {
     pub fn new(db: PgPool, redis: redis::Client, config: Arc<Config>) -> Self {
         let repo = Arc::new(PgRepository::new(db.clone()));
         let provider_config_repo = Arc::new(PgProviderConfigRepository::new(db.clone()));
+        let webhook_repo = Arc::new(PgWebhookRepository::new(db.clone()));
         Self {
             db: Some(db),
             redis,
@@ -40,6 +47,7 @@ impl AppState {
             message_repo: repo.clone(),
             api_key_repo: repo,
             provider_config_repo,
+            webhook_repo,
         }
     }
 
@@ -51,6 +59,7 @@ impl AppState {
         message_repo: Arc<dyn MessageRepository>,
         api_key_repo: Arc<dyn ApiKeyRepository>,
         provider_config_repo: Arc<dyn ProviderConfigRepository>,
+        webhook_repo: Arc<dyn WebhookRepository>,
     ) -> Self {
         Self {
             db: None,
@@ -60,6 +69,7 @@ impl AppState {
             message_repo,
             api_key_repo,
             provider_config_repo,
+            webhook_repo,
         }
     }
 
@@ -81,6 +91,11 @@ impl AppState {
     /// Access the provider config repository.
     pub fn provider_config_repo(&self) -> Arc<dyn ProviderConfigRepository> {
         Arc::clone(&self.provider_config_repo)
+    }
+
+    /// Access the webhook repository.
+    pub fn webhook_repo(&self) -> Arc<dyn WebhookRepository> {
+        Arc::clone(&self.webhook_repo)
     }
 
     /// Access the server configuration.
@@ -112,6 +127,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/providers/{id}",
             delete(routes::provider_configs::delete_provider_config),
+        )
+        .route(
+            "/v1/webhooks",
+            get(routes::webhooks::list_webhooks).post(routes::webhooks::create_webhook),
+        )
+        .route(
+            "/v1/webhooks/{id}",
+            delete(routes::webhooks::delete_webhook),
         )
         .route("/internal/bounces", post(routes::internal::handle_bounce))
         .route("/internal/dns-check", get(routes::internal::dns_check))

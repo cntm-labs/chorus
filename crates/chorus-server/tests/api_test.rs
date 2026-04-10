@@ -13,8 +13,8 @@ use chorus_server::app::{create_router, AppState};
 use chorus_server::config::Config;
 use chorus_server::db::{
     Account, AccountRepository, ApiKey, ApiKeyRepository, DbError, DeliveryEvent, Message,
-    MessageRepository, NewMessage, NewProviderConfig, Pagination, ProviderConfig,
-    ProviderConfigRepository,
+    MessageRepository, NewMessage, NewProviderConfig, NewWebhook, Pagination, ProviderConfig,
+    ProviderConfigRepository, Webhook, WebhookRepository,
 };
 
 // ---------------------------------------------------------------------------
@@ -163,6 +163,39 @@ impl ApiKeyRepository for MockApiKeyRepo {
     }
 }
 
+struct MockWebhookRepo;
+
+#[async_trait]
+impl WebhookRepository for MockWebhookRepo {
+    async fn insert(&self, webhook: &NewWebhook) -> Result<Webhook, DbError> {
+        Ok(Webhook {
+            id: Uuid::new_v4(),
+            account_id: webhook.account_id,
+            url: webhook.url.clone(),
+            secret: webhook.secret.clone(),
+            events: webhook.events.clone(),
+            is_active: true,
+            created_at: Utc::now(),
+        })
+    }
+
+    async fn list_by_account(&self, _account_id: Uuid) -> Result<Vec<Webhook>, DbError> {
+        Ok(vec![])
+    }
+
+    async fn list_by_account_event(
+        &self,
+        _account_id: Uuid,
+        _event: &str,
+    ) -> Result<Vec<Webhook>, DbError> {
+        Ok(vec![])
+    }
+
+    async fn delete(&self, _id: Uuid, _account_id: Uuid) -> Result<(), DbError> {
+        Ok(())
+    }
+}
+
 struct MockProviderConfigRepo;
 
 #[async_trait]
@@ -235,6 +268,7 @@ fn test_state() -> Arc<AppState> {
     let message_repo = Arc::new(MockMessageRepo::new());
     let api_key_repo = Arc::new(MockApiKeyRepo);
     let provider_config_repo = Arc::new(MockProviderConfigRepo);
+    let webhook_repo = Arc::new(MockWebhookRepo);
 
     // Use a dummy Redis URL — tests that hit Redis will fail,
     // but auth + DB-only tests will work
@@ -248,6 +282,7 @@ fn test_state() -> Arc<AppState> {
         message_repo,
         api_key_repo,
         provider_config_repo,
+        webhook_repo,
     ))
 }
 
