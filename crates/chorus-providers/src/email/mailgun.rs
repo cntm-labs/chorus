@@ -77,11 +77,10 @@ impl EmailSender for MailgunEmailSender {
             });
         }
 
-        let mg_resp: MailgunResponse =
-            resp.json().await.map_err(|e| ChorusError::Provider {
-                provider: "mailgun".into(),
-                message: format!("parse error: {}", e),
-            })?;
+        let mg_resp: MailgunResponse = resp.json().await.map_err(|e| ChorusError::Provider {
+            provider: "mailgun".into(),
+            message: format!("parse error: {}", e),
+        })?;
 
         Ok(SendResult {
             message_id: mg_resp.id,
