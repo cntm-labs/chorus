@@ -25,6 +25,8 @@ thiserror = { workspace = true }
 dotenvy = { workspace = true }
 rand = { workspace = true }
 hex = { workspace = true }
+hmac = { version = "0.12", features = ["std"] }
+reqwest = { workspace = true }
 async-trait = { workspace = true }
 hickory-resolver = { workspace = true }
 
