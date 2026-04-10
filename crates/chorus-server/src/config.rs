@@ -46,6 +46,12 @@ pub struct Config {
     pub smtp_username: Option<String>,
     /// SMTP password.
     pub smtp_password: Option<String>,
+    /// Mailgun API key.
+    pub mailgun_api_key: Option<String>,
+    /// Mailgun sending domain.
+    pub mailgun_domain: Option<String>,
+    /// Mailgun base URL (default US, set to https://api.eu.mailgun.net for EU).
+    pub mailgun_base_url: Option<String>,
     /// Default sender email address.
     pub from_email: Option<String>,
 
@@ -80,6 +86,9 @@ impl Config {
             plivo_auth_token: std::env::var("PLIVO_AUTH_TOKEN").ok(),
             plivo_from: std::env::var("PLIVO_FROM").ok(),
 
+            mailgun_api_key: std::env::var("MAILGUN_API_KEY").ok(),
+            mailgun_domain: std::env::var("MAILGUN_DOMAIN").ok(),
+            mailgun_base_url: std::env::var("MAILGUN_BASE_URL").ok(),
             resend_api_key: std::env::var("RESEND_API_KEY").ok(),
             ses_access_key: std::env::var("AWS_SES_ACCESS_KEY").ok(),
             ses_secret_key: std::env::var("AWS_SES_SECRET_KEY").ok(),

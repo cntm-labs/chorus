@@ -1,4 +1,5 @@
 use chorus::router::WaterfallRouter;
+use chorus_providers::email::mailgun::MailgunEmailSender;
 use chorus_providers::email::mock::MockEmailSender;
 use chorus_providers::email::resend::ResendEmailSender;
 use chorus_providers::email::ses::SesEmailSender;
@@ -71,6 +72,18 @@ pub fn build_router_from_env(config: &Config, channel: &str) -> anyhow::Result<W
             }
         }
         "email" => {
+            if let (Some(ref api_key), Some(ref domain), Some(ref from)) = (
+                &config.mailgun_api_key,
+                &config.mailgun_domain,
+                &config.from_email,
+            ) {
+                let mut sender =
+                    MailgunEmailSender::new(api_key.clone(), domain.clone(), from.clone());
+                if let Some(ref base_url) = config.mailgun_base_url {
+                    sender = sender.with_base_url(base_url.clone());
+                }
+                router = router.add_email(Arc::new(sender));
+            }
             if let (Some(ref api_key), Some(ref from)) =
                 (&config.resend_api_key, &config.from_email)
             {
@@ -139,6 +152,16 @@ fn add_provider_to_router(
             let token = creds["auth_token"].as_str().unwrap_or_default().to_string();
             let from = creds["from"].as_str().map(String::from);
             Ok(router.add_sms(Arc::new(PlivoSmsSender::new(id, token, from))))
+        }
+        ("email", "mailgun") => {
+            let api_key = creds["api_key"].as_str().unwrap_or_default().to_string();
+            let domain = creds["domain"].as_str().unwrap_or_default().to_string();
+            let from = creds["from"].as_str().unwrap_or_default().to_string();
+            let mut sender = MailgunEmailSender::new(api_key, domain, from);
+            if let Some(base_url) = creds["base_url"].as_str() {
+                sender = sender.with_base_url(base_url.to_string());
+            }
+            Ok(router.add_email(Arc::new(sender)))
         }
         ("email", "resend") => {
             let api_key = creds["api_key"].as_str().unwrap_or_default().to_string();
