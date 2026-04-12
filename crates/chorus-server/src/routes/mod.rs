@@ -6,3 +6,4 @@ pub mod messages;
 pub mod otp;
 pub mod provider_configs;
 pub mod sms;
+pub mod webhooks;

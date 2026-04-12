@@ -1,5 +1,6 @@
 pub mod postgres;
 pub mod provider_config;
+pub mod webhook;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -179,6 +180,46 @@ pub trait ProviderConfigRepository: Send + Sync {
     async fn list_by_account(&self, account_id: Uuid) -> Result<Vec<ProviderConfig>, DbError>;
 
     /// Delete a provider config.
+    async fn delete(&self, id: Uuid, account_id: Uuid) -> Result<(), DbError>;
+}
+
+/// A webhook registration for delivery callbacks.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Webhook {
+    pub id: Uuid,
+    pub account_id: Uuid,
+    pub url: String,
+    pub secret: String,
+    pub events: Vec<String>,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Parameters for registering a new webhook.
+pub struct NewWebhook {
+    pub account_id: Uuid,
+    pub url: String,
+    pub secret: String,
+    pub events: Vec<String>,
+}
+
+/// Webhook registration management.
+#[async_trait]
+pub trait WebhookRepository: Send + Sync {
+    /// Insert a new webhook.
+    async fn insert(&self, webhook: &NewWebhook) -> Result<Webhook, DbError>;
+
+    /// List all active webhooks for an account.
+    async fn list_by_account(&self, account_id: Uuid) -> Result<Vec<Webhook>, DbError>;
+
+    /// List webhooks matching an account and event type.
+    async fn list_by_account_event(
+        &self,
+        account_id: Uuid,
+        event: &str,
+    ) -> Result<Vec<Webhook>, DbError>;
+
+    /// Delete a webhook (soft-delete by setting `is_active = false`).
     async fn delete(&self, id: Uuid, account_id: Uuid) -> Result<(), DbError>;
 }
 

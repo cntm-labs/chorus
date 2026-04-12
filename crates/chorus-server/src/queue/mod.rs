@@ -2,6 +2,7 @@ pub mod dead_letter;
 pub mod delayed;
 pub mod enqueue;
 pub mod router_builder;
+pub mod webhook_dispatch;
 pub mod worker;
 
 use serde::{Deserialize, Serialize};

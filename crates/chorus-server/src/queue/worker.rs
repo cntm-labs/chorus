@@ -1,4 +1,5 @@
 use chorus::types::{EmailMessage, SmsMessage};
+use chrono::Utc;
 use std::sync::Arc;
 
 use crate::app::AppState;
@@ -63,6 +64,23 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
         )
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        // Dispatch webhook for failure
+        let webhook_payload = super::webhook_dispatch::WebhookPayload {
+            event: "message.failed".into(),
+            message_id: job.message_id,
+            channel: job.channel.clone(),
+            provider: None,
+            status: "failed".into(),
+            timestamp: Utc::now().to_rfc3339(),
+        };
+        super::webhook_dispatch::dispatch_webhooks(
+            state,
+            job.account_id,
+            "message.failed",
+            &webhook_payload,
+        )
+        .await;
 
         super::dead_letter::push_to_dlq(&state.redis, &job).await?;
         return Ok(());
@@ -130,6 +148,23 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            // Dispatch webhook
+            let webhook_payload = super::webhook_dispatch::WebhookPayload {
+                event: "message.delivered".into(),
+                message_id: job.message_id,
+                channel: job.channel.clone(),
+                provider: Some(result.provider.clone()),
+                status: "delivered".into(),
+                timestamp: Utc::now().to_rfc3339(),
+            };
+            super::webhook_dispatch::dispatch_webhooks(
+                state,
+                job.account_id,
+                "message.delivered",
+                &webhook_payload,
+            )
+            .await;
         }
         Err(e) => {
             let error_msg = e.to_string();
