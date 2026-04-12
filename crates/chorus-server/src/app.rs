@@ -136,6 +136,11 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/v1/webhooks/{id}",
             delete(routes::webhooks::delete_webhook),
         )
+        .route("/v1/sms/send-batch", post(routes::batch::send_sms_batch))
+        .route(
+            "/v1/email/send-batch",
+            post(routes::batch::send_email_batch),
+        )
         .route("/internal/bounces", post(routes::internal::handle_bounce))
         .route("/internal/dns-check", get(routes::internal::dns_check))
         .with_state(state)
