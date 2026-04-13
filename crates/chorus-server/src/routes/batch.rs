@@ -59,13 +59,17 @@ pub struct BatchMessageResult {
     pub status: &'static str,
 }
 
-/// Batch send response.
+/// Batch send response. Includes partial results if an error occurred mid-batch.
 #[derive(Serialize)]
 pub struct BatchSendResponse {
     pub messages: Vec<BatchMessageResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Queue a batch of SMS messages. Returns 202 Accepted.
+///
+/// On partial failure, returns already-queued messages with an error field.
 pub async fn send_sms_batch(
     State(state): State<Arc<AppState>>,
     ctx: AccountContext,
@@ -87,11 +91,18 @@ pub async fn send_sms_batch(
             environment: ctx.environment.clone(),
         };
 
-        let message = state
-            .message_repo()
-            .insert(&new_msg)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let message = match state.message_repo().insert(&new_msg).await {
+            Ok(m) => m,
+            Err(e) => {
+                return Ok((
+                    StatusCode::ACCEPTED,
+                    Json(BatchSendResponse {
+                        messages: results,
+                        error: Some(format!("failed at recipient {}: {}", recipient.to, e)),
+                    }),
+                ));
+            }
+        };
 
         let job = SendJob {
             message_id: message.id,
@@ -100,9 +111,15 @@ pub async fn send_sms_batch(
             environment: message.environment.clone(),
             attempt: 0,
         };
-        crate::queue::enqueue::enqueue_job(&state, &job)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if let Err(e) = crate::queue::enqueue::enqueue_job(&state, &job).await {
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(BatchSendResponse {
+                    messages: results,
+                    error: Some(format!("failed to enqueue for {}: {}", recipient.to, e)),
+                }),
+            ));
+        }
 
         results.push(BatchMessageResult {
             message_id: message.id,
@@ -113,11 +130,16 @@ pub async fn send_sms_batch(
 
     Ok((
         StatusCode::ACCEPTED,
-        Json(BatchSendResponse { messages: results }),
+        Json(BatchSendResponse {
+            messages: results,
+            error: None,
+        }),
     ))
 }
 
 /// Queue a batch of email messages. Returns 202 Accepted.
+///
+/// On partial failure, returns already-queued messages with an error field.
 pub async fn send_email_batch(
     State(state): State<Arc<AppState>>,
     ctx: AccountContext,
@@ -139,11 +161,18 @@ pub async fn send_email_batch(
             environment: ctx.environment.clone(),
         };
 
-        let message = state
-            .message_repo()
-            .insert(&new_msg)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let message = match state.message_repo().insert(&new_msg).await {
+            Ok(m) => m,
+            Err(e) => {
+                return Ok((
+                    StatusCode::ACCEPTED,
+                    Json(BatchSendResponse {
+                        messages: results,
+                        error: Some(format!("failed at recipient {}: {}", recipient.to, e)),
+                    }),
+                ));
+            }
+        };
 
         let job = SendJob {
             message_id: message.id,
@@ -152,9 +181,15 @@ pub async fn send_email_batch(
             environment: message.environment.clone(),
             attempt: 0,
         };
-        crate::queue::enqueue::enqueue_job(&state, &job)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if let Err(e) = crate::queue::enqueue::enqueue_job(&state, &job).await {
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(BatchSendResponse {
+                    messages: results,
+                    error: Some(format!("failed to enqueue for {}: {}", recipient.to, e)),
+                }),
+            ));
+        }
 
         results.push(BatchMessageResult {
             message_id: message.id,
@@ -165,7 +200,10 @@ pub async fn send_email_batch(
 
     Ok((
         StatusCode::ACCEPTED,
-        Json(BatchSendResponse { messages: results }),
+        Json(BatchSendResponse {
+            messages: results,
+            error: None,
+        }),
     ))
 }
 

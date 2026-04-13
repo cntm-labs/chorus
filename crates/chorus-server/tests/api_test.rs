@@ -421,3 +421,155 @@ async fn providers_list_returns_200() {
     let body = response_body(resp).await;
     assert!(body.as_array().unwrap().is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Batch SMS tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn sms_batch_without_auth_returns_401() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send-batch")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"recipients":[{"to":"+1234567890","body":"hi"}]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn sms_batch_empty_recipients_returns_400() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send-batch")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::from(r#"{"recipients":[]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn sms_batch_exceeds_max_returns_400() {
+    let app = create_router(test_state());
+
+    // Build 101 recipients (max is 100)
+    let recipients: Vec<Value> = (0..101)
+        .map(|i| {
+            serde_json::json!({
+                "to": format!("+1{:010}", i),
+                "body": "hello"
+            })
+        })
+        .collect();
+    let body = serde_json::json!({ "recipients": recipients }).to_string();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send-batch")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+// ---------------------------------------------------------------------------
+// Batch Email tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn email_batch_without_auth_returns_401() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/email/send-batch")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"recipients":[{"to":"a@b.com","subject":"hi","body":"hey"}]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn email_batch_empty_recipients_returns_400() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/email/send-batch")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::from(r#"{"recipients":[]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn email_batch_exceeds_max_returns_400() {
+    let app = create_router(test_state());
+
+    let recipients: Vec<Value> = (0..101)
+        .map(|i| {
+            serde_json::json!({
+                "to": format!("user{}@example.com", i),
+                "subject": "test",
+                "body": "hello"
+            })
+        })
+        .collect();
+    let body = serde_json::json!({ "recipients": recipients }).to_string();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/email/send-batch")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
