@@ -34,7 +34,10 @@ Rust backend (Axum) with waterfall routing — OTP and notifications via email f
 - **Waterfall routing** — send OTP/notifications via email first (Resend, free tier), fall back to SMS only when no email available — saving 60-80% cost
 - **Multi-provider failover** — auto-retry with next provider on failure
 - **7 providers** — Telnyx, Twilio, Plivo (SMS) + Resend, AWS SES, Mailgun, SMTP (Email)
+- **Batch send** — send SMS or Email to multiple recipients in one call
+- **Webhooks** — real-time delivery status notifications with HMAC-SHA256 signatures
 - **Template engine** — `{{variable}}` syntax with OTP generation
+- **SDKs** — Rust, TypeScript, Java (Go, Python, C coming soon)
 - **Test mode** — `ch_test_` API keys log only, never send real messages
 - **Self-hosted free** — MIT license, no billing when self-hosted
 
@@ -72,12 +75,12 @@ crates/                  # Publishable libraries
 services/                # Internal binaries (not published)
 └── chorus-server        # Axum REST API, billing, dashboard
 sdks/
-├── rust/                # Native SDK
-├── typescript/          # Node.js + Browser
-├── go/
-├── java/
-├── python/
-└── c/
+├── rust/                # Native SDK (chorus-rs, re-exports chorus-core + providers)
+├── typescript/          # Node.js + Browser (@cntm-labs/chorus)
+├── java/                # Java 11+ (com.cntm-labs:chorus)
+├── go/                  # Coming soon
+├── python/              # Coming soon
+└── c/                   # Coming soon
 ```
 
 ## Development
