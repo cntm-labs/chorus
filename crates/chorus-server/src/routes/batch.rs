@@ -98,10 +98,7 @@ pub async fn send_sms_batch(
                     StatusCode::ACCEPTED,
                     Json(BatchSendResponse {
                         messages: results,
-                        error: Some(format!(
-                            "failed at recipient {}: {}",
-                            recipient.to, e
-                        )),
+                        error: Some(format!("failed at recipient {}: {}", recipient.to, e)),
                     }),
                 ));
             }
@@ -119,10 +116,7 @@ pub async fn send_sms_batch(
                 StatusCode::ACCEPTED,
                 Json(BatchSendResponse {
                     messages: results,
-                    error: Some(format!(
-                        "failed to enqueue for {}: {}",
-                        recipient.to, e
-                    )),
+                    error: Some(format!("failed to enqueue for {}: {}", recipient.to, e)),
                 }),
             ));
         }
@@ -174,10 +168,7 @@ pub async fn send_email_batch(
                     StatusCode::ACCEPTED,
                     Json(BatchSendResponse {
                         messages: results,
-                        error: Some(format!(
-                            "failed at recipient {}: {}",
-                            recipient.to, e
-                        )),
+                        error: Some(format!("failed at recipient {}: {}", recipient.to, e)),
                     }),
                 ));
             }
@@ -195,10 +186,7 @@ pub async fn send_email_batch(
                 StatusCode::ACCEPTED,
                 Json(BatchSendResponse {
                     messages: results,
-                    error: Some(format!(
-                        "failed to enqueue for {}: {}",
-                        recipient.to, e
-                    )),
+                    error: Some(format!("failed to enqueue for {}: {}", recipient.to, e)),
                 }),
             ));
         }
