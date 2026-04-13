@@ -27,13 +27,13 @@
 
 ---
 
-Rust backend (Axum) with waterfall routing — email first (free), SMS fallback (paid) — saving 60-80% cost. Supports 6 providers with automatic failover.
+Rust backend (Axum) with waterfall routing — OTP and notifications via email first (cheap/free), SMS fallback only when needed (paid) — saving 60-80% cost. Supports 7 providers with automatic failover.
 
 ## Features
 
-- **Waterfall routing** — email first (free) then SMS fallback (paid), saving 60-80% cost
+- **Waterfall routing** — send OTP/notifications via email first (Resend, free tier), fall back to SMS only when no email available — saving 60-80% cost
 - **Multi-provider failover** — auto-retry with next provider on failure
-- **6 providers** — Telnyx, Twilio, Plivo (SMS) + Resend, AWS SES, SMTP (Email)
+- **7 providers** — Telnyx, Twilio, Plivo (SMS) + Resend, AWS SES, Mailgun, SMTP (Email)
 - **Template engine** — `{{variable}}` syntax with OTP generation
 - **Test mode** — `ch_test_` API keys log only, never send real messages
 - **Self-hosted free** — MIT license, no billing when self-hosted
@@ -66,13 +66,14 @@ chorus.send_otp("user@example.com", "123456", "MyApp").await?;
 ## Architecture
 
 ```
-crates/
-├── chorus-core        # Traits, routing engine, types, errors (leaf crate)
-├── chorus-providers   # Telnyx, Twilio, Plivo, Resend, SES, SMTP adapters
-└── chorus-server      # Axum REST API, billing, dashboard (coming soon)
+crates/                  # Publishable libraries
+├── chorus-core          # Traits, routing engine, types, errors (leaf crate)
+└── chorus-providers     # Telnyx, Twilio, Plivo, Resend, SES, Mailgun, SMTP adapters
+services/                # Internal binaries (not published)
+└── chorus-server        # Axum REST API, billing, dashboard
 sdks/
-├── rust/              # Native SDK
-├── typescript/        # Node.js + Browser
+├── rust/                # Native SDK
+├── typescript/          # Node.js + Browser
 ├── go/
 ├── java/
 ├── python/

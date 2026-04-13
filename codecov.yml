@@ -32,7 +32,7 @@ ignore:
   - "load-tests/"
   - "deploy/"
   - "crates/*/benches/"
-  - "crates/chorus-server/"  # TODO: remove after Phase 2a coverage is added
+  - "services/chorus-server/"
 
 comment:
   layout: "reach,diff,flags,files"
