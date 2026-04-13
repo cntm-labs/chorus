@@ -1,4 +1,4 @@
-name: Publish Crates (Manual)
+name: Publish All SDKs (Manual)
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ on:
           - "true"
 
 jobs:
-  publish:
+  publish-crates:
     runs-on: ubuntu-latest
     environment: crates-io
     steps:
@@ -29,7 +29,7 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Wait for crates.io index
+      - name: Wait for crates.io index (chorus-core)
         if: inputs.dry-run == 'false'
         run: sleep 30
 
@@ -37,3 +37,70 @@ jobs:
         run: cargo publish -p chorus-providers --no-verify ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for crates.io index (chorus-providers)
+        if: inputs.dry-run == 'false'
+        run: sleep 30
+
+      - name: Publish chorus-rs
+        run: cargo publish -p chorus-rs --no-verify ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  publish-npm:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+      - name: Publish to npm
+        if: inputs.dry-run == 'false'
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Dry run npm publish
+        if: inputs.dry-run == 'true'
+        run: npm publish --access public --dry-run
+
+  publish-maven:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/java
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "11"
+          distribution: "temurin"
+          server-id: ossrh
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - run: mvn test
+
+      - name: Deploy to Maven Central
+        if: inputs.dry-run == 'false'
+        run: mvn deploy -DskipTests -Possrh
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Dry run Maven deploy
+        if: inputs.dry-run == 'true'
+        run: mvn package -DskipTests

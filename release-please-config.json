@@ -20,13 +20,45 @@
           "jsonpath": "$.dependencies.chorus-core.version"
         }
       ]
+    },
+    "sdks/rust": {
+      "release-type": "rust",
+      "component": "chorus-rs",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true,
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "glob": true,
+          "jsonpath": "$.dependencies.chorus-core.version"
+        },
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "glob": true,
+          "jsonpath": "$.dependencies.chorus-providers.version"
+        }
+      ]
+    },
+    "sdks/typescript": {
+      "release-type": "node",
+      "component": "chorus-typescript",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true
+    },
+    "sdks/java": {
+      "release-type": "maven",
+      "component": "chorus-java",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true
     }
   },
   "group-pull-request-title-pattern": "chore: release ${version}",
   "linked-versions": [
     {
       "tag": "v",
-      "components": ["chorus-core", "chorus-providers"]
+      "components": ["chorus-core", "chorus-providers", "chorus-rs", "chorus-typescript", "chorus-java"]
     }
   ]
 }
