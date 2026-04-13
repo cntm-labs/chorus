@@ -6,7 +6,7 @@ Chorus is an open-source Communications Platform as a Service (CPaaS) built in R
 ## Tech Stack
 - **Language:** Rust (stable) with Axum web framework
 - **Database:** PostgreSQL 16 (message history, accounts, billing) + Redis 7 (async queue, caching)
-- **Providers:** Telnyx, Twilio, Plivo (SMS) + Resend, AWS SES, SMTP (Email)
+- **Providers:** Telnyx, Twilio, Plivo (SMS) + Resend, AWS SES, Mailgun, SMTP (Email)
 - **Payment:** Stripe + Stripe Tax
 - **Monitoring:** Prometheus + Loki (data) → Strata (dashboard, separate repo)
 - **SDKs:** Rust, TypeScript, Go, Java, Python, C
@@ -23,13 +23,14 @@ cargo llvm-cov nextest --workspace  # Test with coverage
 
 ## Project Structure
 ```
-crates/
-├── chorus-core        # Traits, routing engine, types, errors (leaf crate)
-├── chorus-providers   # Telnyx, Twilio, Plivo, Resend, SES, SMTP, Mock adapters
-└── chorus-server      # Axum REST API, billing, dashboard
+crates/                  # Publishable libraries (crates.io)
+├── chorus-core          # Traits, routing engine, types, errors (leaf crate)
+└── chorus-providers     # Telnyx, Twilio, Plivo, Resend, SES, Mailgun, SMTP, Mock adapters
+services/                # Internal binaries (not published)
+└── chorus-server        # Axum REST API, billing, dashboard
 sdks/
-├── rust/              # Native (uses chorus-core directly)
-├── typescript/        # Node.js + Browser
+├── rust/                # Native (uses chorus-core directly)
+├── typescript/          # Node.js + Browser
 ├── go/
 ├── java/
 ├── python/
@@ -37,13 +38,13 @@ sdks/
 ```
 
 ## Dependency Rules (STRICT)
-- chorus-core → external deps only (leaf crate)
-- chorus-providers → chorus-core + reqwest
-- chorus-server → all crates (composition root)
+- chorus-core → external deps only (leaf crate, published to crates.io)
+- chorus-providers → chorus-core + reqwest (published to crates.io)
+- chorus-server → all crates (composition root, internal only, NOT published)
 - SDKs → HTTP only (no Rust dependency except Rust SDK)
 
 ## Key Design Decisions
-- **Waterfall routing:** Email first (free) → SMS fallback (paid) — saves 60-80% cost
+- **Waterfall routing:** OTP/notifications via email first (Resend, cheap/free) → SMS fallback only when no email — saves 60-80% cost
 - **Async queue:** Accept request immediately (202) → process via Redis workers
 - **Multi-provider failover:** If provider #1 fails → auto-retry with provider #2
 - **Test mode:** `ch_test_` API keys log only, never send real messages

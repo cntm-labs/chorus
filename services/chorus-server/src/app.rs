@@ -19,6 +19,8 @@ pub struct AppState {
     pub db: Option<PgPool>,
     /// Redis client for queue, caching, and OTP.
     pub redis: redis::Client,
+    /// Shared HTTP client for outbound requests (webhooks, etc.).
+    http_client: reqwest::Client,
     /// Server configuration.
     config: Arc<Config>,
     /// Account + API key repository.
@@ -42,6 +44,7 @@ impl AppState {
         Self {
             db: Some(db),
             redis,
+            http_client: reqwest::Client::new(),
             config,
             account_repo: repo.clone(),
             message_repo: repo.clone(),
@@ -64,6 +67,7 @@ impl AppState {
         Self {
             db: None,
             redis,
+            http_client: reqwest::Client::new(),
             config,
             account_repo,
             message_repo,
@@ -96,6 +100,11 @@ impl AppState {
     /// Access the webhook repository.
     pub fn webhook_repo(&self) -> Arc<dyn WebhookRepository> {
         Arc::clone(&self.webhook_repo)
+    }
+
+    /// Access the shared HTTP client.
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.http_client
     }
 
     /// Access the server configuration.

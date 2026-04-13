@@ -1,7 +1,7 @@
 use async_trait::async_trait;
-use chorus::error::ChorusError;
-use chorus::sms::SmsSender;
-use chorus::types::{Channel, DeliveryStatus, SendResult, SmsMessage};
+use chorus_core::error::ChorusError;
+use chorus_core::sms::SmsSender;
+use chorus_core::types::{Channel, DeliveryStatus, SendResult, SmsMessage};
 use chrono::Utc;
 use uuid::Uuid;
 

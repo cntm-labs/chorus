@@ -3,7 +3,8 @@ resolver = "2"
 members = [
     "crates/chorus-core",
     "crates/chorus-providers",
-    "crates/chorus-server",
+    "services/chorus-server",
+    "sdks/rust",
 ]
 
 [workspace.dependencies]

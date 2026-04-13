@@ -1,4 +1,4 @@
-use chorus::router::WaterfallRouter;
+use chorus_core::router::WaterfallRouter;
 use chorus_providers::email::mailgun::MailgunEmailSender;
 use chorus_providers::email::mock::MockEmailSender;
 use chorus_providers::email::resend::ResendEmailSender;
@@ -72,18 +72,6 @@ pub fn build_router_from_env(config: &Config, channel: &str) -> anyhow::Result<W
             }
         }
         "email" => {
-            if let (Some(ref api_key), Some(ref domain), Some(ref from)) = (
-                &config.mailgun_api_key,
-                &config.mailgun_domain,
-                &config.from_email,
-            ) {
-                let mut sender =
-                    MailgunEmailSender::new(api_key.clone(), domain.clone(), from.clone());
-                if let Some(ref base_url) = config.mailgun_base_url {
-                    sender = sender.with_base_url(base_url.clone());
-                }
-                router = router.add_email(Arc::new(sender));
-            }
             if let (Some(ref api_key), Some(ref from)) =
                 (&config.resend_api_key, &config.from_email)
             {
@@ -116,6 +104,18 @@ pub fn build_router_from_env(config: &Config, channel: &str) -> anyhow::Result<W
                     pass.clone(),
                     from.clone(),
                 )?;
+                router = router.add_email(Arc::new(sender));
+            }
+            if let (Some(ref api_key), Some(ref domain), Some(ref from)) = (
+                &config.mailgun_api_key,
+                &config.mailgun_domain,
+                &config.from_email,
+            ) {
+                let mut sender =
+                    MailgunEmailSender::new(api_key.clone(), domain.clone(), from.clone());
+                if let Some(ref base_url) = config.mailgun_base_url {
+                    sender = sender.with_base_url(base_url.clone());
+                }
                 router = router.add_email(Arc::new(sender));
             }
         }

@@ -4,10 +4,11 @@ version = "0.1.1"
 edition = "2021"
 license = "MIT"
 description = "Axum REST API server for Chorus CPaaS"
+publish = false
 
 [dependencies]
-chorus-core = { path = "../chorus-core", version = "0.1.1" }
-chorus-providers = { path = "../chorus-providers", version = "0.1.1" }
+chorus-core = { path = "../../crates/chorus-core", version = "0.1.1" }
+chorus-providers = { path = "../../crates/chorus-providers", version = "0.1.1" }
 axum = { workspace = true }
 tower-http = { workspace = true }
 tokio = { workspace = true }

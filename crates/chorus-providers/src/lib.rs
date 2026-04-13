@@ -20,9 +20,9 @@
 //! | SMTP | [`email::smtp::SmtpEmailSender`] | SMTP |
 //! | Mock | [`email::mock::MockEmailSender`] | In-memory (testing) |
 //!
-//! All providers implement [`chorus::sms::SmsSender`] or
-//! [`chorus::email::EmailSender`] and can be used interchangeably
-//! with [`chorus::router::WaterfallRouter`].
+//! All providers implement [`chorus_core::sms::SmsSender`] or
+//! [`chorus_core::email::EmailSender`] and can be used interchangeably
+//! with [`chorus_core::router::WaterfallRouter`].
 
 pub mod email;
 pub mod sms;

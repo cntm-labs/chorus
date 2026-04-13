@@ -30,6 +30,10 @@ async fn main() -> anyhow::Result<()> {
         config.worker_concurrency,
     );
     chorus_server::queue::delayed::spawn_delayed_poller(state.redis.clone());
+    chorus_server::queue::webhook_dispatch::spawn_webhook_retry_poller(
+        state.redis.clone(),
+        state.http_client().clone(),
+    );
 
     let app = create_router(state);
 
