@@ -13,8 +13,8 @@ categories = ["api-bindings", "web-programming"]
 name = "chorus"
 
 [dependencies]
-chorus-core = { path = "../../crates/chorus-core", version = "0.1.1" }
-chorus-providers = { path = "../../crates/chorus-providers", version = "0.1.1" }
+chorus-core = { path = "../../crates/chorus-core", version = "0.2.0" }
+chorus-providers = { path = "../../crates/chorus-providers", version = "0.2.0" }
 
 [lints]
 workspace = true
