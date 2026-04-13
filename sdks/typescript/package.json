@@ -1,0 +1,39 @@
+{
+  "name": "@cntm-labs/chorus",
+  "version": "0.2.0",
+  "description": "Official TypeScript SDK for Chorus CPaaS — SMS, Email, OTP",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "sms",
+    "email",
+    "otp",
+    "cpas",
+    "messaging",
+    "chorus"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cntm-labs/chorus",
+    "directory": "sdks/typescript"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "msw": "^2.7",
+    "typescript": "^5.4",
+    "vitest": "^3.0"
+  }
+}
