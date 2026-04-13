@@ -9,9 +9,12 @@
 [![Release](https://github.com/cntm-labs/chorus/actions/workflows/release-please.yml/badge.svg)](https://github.com/cntm-labs/chorus/actions/workflows/release-please.yml)
 [![codecov](https://codecov.io/gh/cntm-labs/chorus/branch/main/graph/badge.svg)](https://codecov.io/gh/cntm-labs/chorus)
 
+[![crates.io chorus-rs](https://img.shields.io/crates/v/chorus-rs?label=chorus-rs&color=fc8d62)](https://crates.io/crates/chorus-rs)
 [![crates.io chorus-core](https://img.shields.io/crates/v/chorus-core?label=chorus-core&color=fc8d62)](https://crates.io/crates/chorus-core)
 [![crates.io chorus-providers](https://img.shields.io/crates/v/chorus-providers?label=chorus-providers&color=fc8d62)](https://crates.io/crates/chorus-providers)
-[![docs.rs](https://img.shields.io/docsrs/chorus-core?label=docs.rs)](https://docs.rs/chorus-core)
+[![npm @cntm-labs/chorus](https://img.shields.io/npm/v/@cntm-labs/chorus?label=@cntm-labs/chorus&color=cb3837)](https://www.npmjs.com/package/@cntm-labs/chorus)
+[![Maven Central](https://img.shields.io/maven-central/v/com.cntm-labs/chorus?label=com.cntm-labs:chorus&color=C71A36)](https://central.sonatype.com/artifact/com.cntm-labs/chorus)
+[![docs.rs](https://img.shields.io/docsrs/chorus-rs?label=docs.rs)](https://docs.rs/chorus-rs)
 
 [![Rust](https://img.shields.io/badge/Rust-2k_LOC-dea584?logo=rust&logoColor=white)](crates/)
 [![Total Lines](https://img.shields.io/badge/Total-2k+_LOC-blue)](./)
