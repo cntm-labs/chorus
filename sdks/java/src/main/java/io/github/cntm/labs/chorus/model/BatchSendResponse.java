@@ -1,4 +1,4 @@
-package com.cntm.labs.chorus.model;
+package io.github.cntm.labs.chorus.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;

@@ -1,7 +1,7 @@
-package com.cntm.labs.chorus;
+package io.github.cntm.labs.chorus;
 
-import com.cntm.labs.chorus.exception.ChorusException;
-import com.cntm.labs.chorus.model.*;
+import io.github.cntm.labs.chorus.exception.ChorusException;
+import io.github.cntm.labs.chorus.model.*;
 import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
 import com.github.tomakehurst.wiremock.junit5.WireMockTest;
 import org.junit.jupiter.api.Test;

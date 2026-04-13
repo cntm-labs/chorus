@@ -1,4 +1,4 @@
-package com.cntm.labs.chorus.exception;
+package io.github.cntm.labs.chorus.exception;
 
 /** Exception thrown when the Chorus API returns an error. */
 public class ChorusException extends RuntimeException {

@@ -1,4 +1,4 @@
-package com.cntm.labs.chorus.model;
+package io.github.cntm.labs.chorus.model;
 
 import java.util.List;
 

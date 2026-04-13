@@ -1,7 +1,7 @@
-package com.cntm.labs.chorus;
+package io.github.cntm.labs.chorus;
 
-import com.cntm.labs.chorus.exception.ChorusException;
-import com.cntm.labs.chorus.model.*;
+import io.github.cntm.labs.chorus.exception.ChorusException;
+import io.github.cntm.labs.chorus.model.*;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;

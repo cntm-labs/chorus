@@ -1,4 +1,4 @@
-package com.cntm.labs.chorus.model;
+package io.github.cntm.labs.chorus.model;
 
 public class OtpVerifyRequest {
     private String to;
