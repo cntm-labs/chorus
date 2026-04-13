@@ -4,6 +4,7 @@ members = [
     "crates/chorus-core",
     "crates/chorus-providers",
     "services/chorus-server",
+    "sdks/rust",
 ]
 
 [workspace.dependencies]

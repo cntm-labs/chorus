@@ -1,0 +1,16 @@
+[package]
+name = "chorus-sdk"
+version = "0.2.0"
+edition = "2021"
+description = "Chorus CPaaS SDK — SMS, Email, OTP with smart routing"
+license = "MIT"
+repository = "https://github.com/cntm-labs/chorus"
+readme = "README.md"
+keywords = ["sms", "email", "otp", "cpas", "messaging"]
+categories = ["api-bindings", "web-programming"]
+
+[dependencies]
+chorus-core = { path = "../../crates/chorus-core", version = "0.1.1" }
+
+[lints]
+workspace = true
