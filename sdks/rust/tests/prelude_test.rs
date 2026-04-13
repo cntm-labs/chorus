@@ -1,8 +1,7 @@
-use chorus_sdk::prelude::*;
+use chorus::prelude::*;
 
 #[test]
 fn prelude_imports_all_key_types() {
-    // Verify all prelude types are accessible
     let _msg = SmsMessage {
         to: "+1234567890".into(),
         body: "test".into(),
@@ -17,15 +16,19 @@ fn prelude_imports_all_key_types() {
         from: None,
     };
 
-    // Builder is accessible
     let _chorus = Chorus::builder().build();
-
-    // Router is accessible
     let _router = WaterfallRouter::new();
 }
 
 #[test]
 fn module_re_exports_work() {
-    // Direct module access works
-    let _: chorus_sdk::types::Channel = chorus_sdk::types::Channel::Sms;
+    let _: chorus::types::Channel = chorus::types::Channel::Sms;
+}
+
+#[test]
+fn providers_re_exported() {
+    let _sender = chorus::providers::sms::telnyx::TelnyxSmsSender::new(
+        "test-key".into(),
+        Some("+1234567890".into()),
+    );
 }

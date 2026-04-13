@@ -1,4 +1,4 @@
-use chorus::types::{EmailMessage, SmsMessage};
+use chorus_core::types::{EmailMessage, SmsMessage};
 use chrono::Utc;
 use std::sync::Arc;
 

@@ -1,14 +1,15 @@
-//! # chorus-sdk
+//! # chorus-rs
 //!
 //! Official Rust SDK for Chorus — open-source CPaaS with SMS, Email, and OTP.
 //!
-//! This crate re-exports [`chorus-core`] for convenience. Use the [`prelude`]
-//! module to import commonly used types.
+//! This crate re-exports [`chorus-core`] (types, traits, routing) and
+//! [`chorus-providers`] (Telnyx, Twilio, Plivo, Resend, SES, Mailgun, SMTP)
+//! so you only need one dependency.
 //!
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use chorus_sdk::prelude::*;
+//! use chorus::prelude::*;
 //! use std::sync::Arc;
 //!
 //! # async fn example() -> Result<(), ChorusError> {
@@ -27,23 +28,29 @@
 //! ```
 
 // Re-export all public modules from chorus-core.
-pub use chorus::client;
-pub use chorus::email;
-pub use chorus::error;
-pub use chorus::router;
-pub use chorus::sms;
-pub use chorus::template;
-pub use chorus::templates;
-pub use chorus::types;
+pub use chorus_core::client;
+pub use chorus_core::email;
+pub use chorus_core::error;
+pub use chorus_core::router;
+pub use chorus_core::sms;
+pub use chorus_core::template;
+pub use chorus_core::templates;
+pub use chorus_core::types;
 
-/// Prelude module — import commonly used types with `use chorus_sdk::prelude::*`.
+// Re-export provider implementations from chorus-providers.
+pub mod providers {
+    pub use chorus_providers::email;
+    pub use chorus_providers::sms;
+}
+
+/// Prelude module — import commonly used types with `use chorus::prelude::*`.
 pub mod prelude {
-    pub use chorus::client::Chorus;
-    pub use chorus::email::EmailSender;
-    pub use chorus::error::ChorusError;
-    pub use chorus::router::WaterfallRouter;
-    pub use chorus::sms::SmsSender;
-    pub use chorus::types::{
+    pub use chorus_core::client::Chorus;
+    pub use chorus_core::email::EmailSender;
+    pub use chorus_core::error::ChorusError;
+    pub use chorus_core::router::WaterfallRouter;
+    pub use chorus_core::sms::SmsSender;
+    pub use chorus_core::types::{
         Channel, DeliveryStatus, EmailMessage, SendResult, SmsMessage, TemplateEmailMessage,
     };
 }

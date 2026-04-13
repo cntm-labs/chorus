@@ -1,7 +1,7 @@
 use async_trait::async_trait;
-use chorus::email::EmailSender;
-use chorus::error::ChorusError;
-use chorus::types::{Channel, DeliveryStatus, EmailMessage, SendResult};
+use chorus_core::email::EmailSender;
+use chorus_core::error::ChorusError;
+use chorus_core::types::{Channel, DeliveryStatus, EmailMessage, SendResult};
 use chrono::Utc;
 use serde::Deserialize;
 

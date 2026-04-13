@@ -12,7 +12,7 @@ readme = "README.md"
 rust-version = "1.85.0"
 
 [lib]
-name = "chorus"
+name = "chorus_core"
 
 [dependencies]
 serde = { workspace = true }
