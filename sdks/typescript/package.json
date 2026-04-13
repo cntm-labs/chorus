@@ -4,14 +4,23 @@
   "description": "Official TypeScript SDK for Chorus CPaaS — SMS, Email, OTP",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit"
   },
-  "keywords": ["sms", "email", "otp", "cpas", "messaging", "chorus"],
+  "keywords": [
+    "sms",
+    "email",
+    "otp",
+    "cpas",
+    "messaging",
+    "chorus"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -22,8 +31,9 @@
     "node": ">=18"
   },
   "devDependencies": {
+    "@types/node": "^25.6.0",
+    "msw": "^2.7",
     "typescript": "^5.4",
-    "vitest": "^3.0",
-    "msw": "^2.7"
+    "vitest": "^3.0"
   }
 }
