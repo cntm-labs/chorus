@@ -1,4 +1,4 @@
-use chorus_server::app::{create_router, AppState};
+use chorus_server::app::{create_router_with_metrics, AppState};
 use chorus_server::config::Config;
 use std::sync::Arc;
 
@@ -12,6 +12,8 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "chorus_server=debug,tower_http=debug".into()),
         )
         .init();
+
+    let metrics_handle = chorus_server::metrics::setup();
 
     let config = Config::from_env();
 
@@ -35,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
         state.http_client().clone(),
     );
 
-    let app = create_router(state);
+    let app = create_router_with_metrics(state, Some(metrics_handle));
 
     let addr = format!("{}:{}", config.host, config.port);
     tracing::info!("chorus-server listening on {}", addr);
