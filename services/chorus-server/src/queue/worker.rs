@@ -129,6 +129,23 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
 
     match send_result {
         Ok(result) => {
+            // Dispatch message.sent (provider accepted)
+            let sent_payload = super::webhook_dispatch::WebhookPayload {
+                event: "message.sent".into(),
+                message_id: job.message_id,
+                channel: job.channel.clone(),
+                provider: Some(result.provider.clone()),
+                status: "sent".into(),
+                timestamp: Utc::now().to_rfc3339(),
+            };
+            super::webhook_dispatch::dispatch_webhooks(
+                state,
+                job.account_id,
+                "message.sent",
+                &sent_payload,
+            )
+            .await;
+
             repo.update_status(
                 job.message_id,
                 "delivered",
