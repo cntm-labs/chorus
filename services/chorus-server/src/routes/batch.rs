@@ -111,7 +111,7 @@ pub async fn send_sms_batch(
             environment: message.environment.clone(),
             attempt: 0,
         };
-        if let Err(e) = crate::queue::enqueue::enqueue_job(&state, &job).await {
+        if let Err(e) = crate::queue::enqueue::notify(&state, &job).await {
             return Ok((
                 StatusCode::ACCEPTED,
                 Json(BatchSendResponse {
@@ -181,7 +181,7 @@ pub async fn send_email_batch(
             environment: message.environment.clone(),
             attempt: 0,
         };
-        if let Err(e) = crate::queue::enqueue::enqueue_job(&state, &job).await {
+        if let Err(e) = crate::queue::enqueue::notify(&state, &job).await {
             return Ok((
                 StatusCode::ACCEPTED,
                 Json(BatchSendResponse {
