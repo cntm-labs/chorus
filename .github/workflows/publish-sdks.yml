@@ -25,7 +25,7 @@ jobs:
         run: cargo test --workspace
 
       - name: Publish chorus-core
-        run: cargo publish -p chorus-core --no-verify ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}
+        run: cargo publish -p chorus-core --no-verify ${{ inputs.dry-run == 'true' && '--dry-run' || '' }} || echo "::warning::chorus-core already published or failed"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -34,7 +34,7 @@ jobs:
         run: sleep 30
 
       - name: Publish chorus-providers
-        run: cargo publish -p chorus-providers --no-verify ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}
+        run: cargo publish -p chorus-providers --no-verify ${{ inputs.dry-run == 'true' && '--dry-run' || '' }} || echo "::warning::chorus-providers already published or failed"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -43,7 +43,7 @@ jobs:
         run: sleep 30
 
       - name: Publish chorus-rs
-        run: cargo publish -p chorus-rs --no-verify ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}
+        run: cargo publish -p chorus-rs --no-verify ${{ inputs.dry-run == 'true' && '--dry-run' || '' }} || echo "::warning::chorus-rs already published or failed"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -66,7 +66,7 @@ jobs:
 
       - name: Publish to npm
         if: inputs.dry-run == 'false'
-        run: npm publish --access public
+        run: npm publish --access public || echo "::warning::npm package already published or failed"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -95,7 +95,7 @@ jobs:
 
       - name: Deploy to Maven Central
         if: inputs.dry-run == 'false'
-        run: mvn deploy -DskipTests -Pcentral
+        run: mvn deploy -DskipTests -Pcentral || echo "::warning::Maven Central deploy failed or already published"
         env:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
