@@ -573,3 +573,98 @@ async fn email_batch_exceeds_max_returns_400() {
 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
+
+// ---------------------------------------------------------------------------
+// Webhook tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn webhook_create_returns_201_with_secret() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::from(
+                    r#"{"url":"https://example.com/hook","events":["message.delivered"]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = response_body(resp).await;
+    assert!(body["id"].is_string());
+    assert_eq!(body["url"], "https://example.com/hook");
+    assert!(body["secret"].as_str().unwrap().len() >= 32);
+    assert_eq!(body["events"][0], "message.delivered");
+}
+
+#[tokio::test]
+async fn webhook_create_invalid_event_returns_400() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::from(
+                    r#"{"url":"https://example.com/hook","events":["invalid.event"]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn webhook_list_returns_200() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/webhooks")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = response_body(resp).await;
+    assert!(body.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn webhook_without_auth_returns_401() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"url":"https://example.com/hook","events":["message.delivered"]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
