@@ -1,4 +1,5 @@
 pub mod batch;
+pub mod billing;
 pub mod email;
 pub mod health;
 pub mod internal;

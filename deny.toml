@@ -4,7 +4,8 @@ all-features = true
 [advisories]
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-# rand unsound with custom logger + rand::rng() — we don't use custom loggers
+# rand 0.8 unsoundness with custom logger — pinned by sqlx-postgres 0.8,
+# not upgradable until sqlx releases with rand 0.9+. We don't use custom loggers.
 ignore = ["RUSTSEC-2026-0097"]
 
 [licenses]

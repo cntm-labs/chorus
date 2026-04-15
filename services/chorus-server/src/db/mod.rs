@@ -1,3 +1,4 @@
+pub mod billing;
 pub mod postgres;
 pub mod provider_config;
 pub mod webhook;
