@@ -46,6 +46,9 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
         .map_err(|e| anyhow::anyhow!("{e}"))?
         .ok_or_else(|| anyhow::anyhow!("message {} not found", job.message_id))?;
 
+    metrics::counter!("chorus_messages_processed_total", "channel" => job.channel.clone())
+        .increment(1);
+
     // Max retries exceeded → DLQ
     if job.attempt >= super::MAX_RETRIES {
         repo.update_status(
@@ -82,6 +85,7 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
         )
         .await;
 
+        metrics::counter!("chorus_messages_total", "channel" => job.channel.clone(), "status" => "failed").increment(1);
         super::dead_letter::push_to_dlq(&state.redis, &job).await?;
         return Ok(());
     }
@@ -166,6 +170,8 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
+            metrics::counter!("chorus_messages_total", "channel" => job.channel.clone(), "status" => "delivered", "provider" => result.provider.clone()).increment(1);
+
             // Dispatch webhook
             let webhook_payload = super::webhook_dispatch::WebhookPayload {
                 event: "message.delivered".into(),
@@ -198,6 +204,9 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            metrics::counter!("chorus_provider_errors_total", "channel" => job.channel.clone())
+                .increment(1);
 
             // Schedule retry with incremented attempt
             let retry_job = super::SendJob {
