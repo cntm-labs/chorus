@@ -1,6 +1,6 @@
 {
   "name": "@cntm-labs/chorus",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Official TypeScript SDK for Chorus CPaaS — SMS, Email, OTP",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

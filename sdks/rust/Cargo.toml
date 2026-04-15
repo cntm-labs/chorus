@@ -1,6 +1,6 @@
 [package]
 name = "chorus-rs"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Chorus CPaaS SDK — SMS, Email, OTP with smart routing and multi-provider failover"
 license = "MIT"
@@ -13,8 +13,8 @@ categories = ["api-bindings", "web-programming"]
 name = "chorus"
 
 [dependencies]
-chorus-core = { path = "../../crates/chorus-core", version = "0.2.0" }
-chorus-providers = { path = "../../crates/chorus-providers", version = "0.2.0" }
+chorus-core = { path = "../../crates/chorus-core", version = "0.3.0" }
+chorus-providers = { path = "../../crates/chorus-providers", version = "0.3.0" }
 
 [lints]
 workspace = true
