@@ -5,6 +5,15 @@ use std::sync::Arc;
 use crate::app::AppState;
 use crate::config::Config;
 
+/// RAII guard that decrements the worker-active gauge when dropped.
+struct WorkerGuard;
+
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        metrics::gauge!("chorus_worker_active").decrement(1.0);
+    }
+}
+
 /// Spawn N worker tasks that process jobs from the main queue.
 pub fn spawn_workers(state: Arc<AppState>, config: Arc<Config>, concurrency: usize) {
     for i in 0..concurrency {
@@ -24,6 +33,9 @@ pub fn spawn_workers(state: Arc<AppState>, config: Arc<Config>, concurrency: usi
 
 /// Block-pop the next job from Redis and process it.
 async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Result<()> {
+    metrics::gauge!("chorus_worker_active").increment(1.0);
+    let _guard = WorkerGuard;
+
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
 
     let result: Option<(String, String)> = redis::cmd("BRPOP")
