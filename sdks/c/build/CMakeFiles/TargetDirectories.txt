@@ -1,5 +1,0 @@
-/Users/mrbt/Desktop/repository/chorus/sdks/c/build/CMakeFiles/chorus.dir
-/Users/mrbt/Desktop/repository/chorus/sdks/c/build/CMakeFiles/test_chorus.dir
-/Users/mrbt/Desktop/repository/chorus/sdks/c/build/CMakeFiles/test.dir
-/Users/mrbt/Desktop/repository/chorus/sdks/c/build/CMakeFiles/edit_cache.dir
-/Users/mrbt/Desktop/repository/chorus/sdks/c/build/CMakeFiles/rebuild_cache.dir
