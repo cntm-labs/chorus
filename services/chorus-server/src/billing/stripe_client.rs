@@ -1,34 +1,59 @@
-use stripe::{
-    CheckoutSession, CheckoutSessionMode, Client, CreateCheckoutSession,
-    CreateCheckoutSessionLineItems, CreateCheckoutSessionLineItemsPriceData,
-    CreateCheckoutSessionLineItemsPriceDataProductData,
-    CreateCheckoutSessionLineItemsPriceDataRecurring,
-    CreateCheckoutSessionLineItemsPriceDataRecurringInterval, CreateCustomer, Currency, Customer,
-};
+use serde::{Deserialize, Serialize};
 
-/// Wrapper around the Stripe API client.
+const STRIPE_API_BASE: &str = "https://api.stripe.com/v1";
+
+/// Wrapper around the Stripe REST API using reqwest.
 pub struct StripeClient {
-    client: Client,
+    http: reqwest::Client,
+    secret_key: String,
+}
+
+#[derive(Deserialize)]
+pub struct StripeCustomer {
+    pub id: String,
+}
+
+#[derive(Deserialize)]
+pub struct StripeCheckoutSession {
+    pub id: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct StripeError {
+    pub error: StripeErrorBody,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct StripeErrorBody {
+    pub message: String,
 }
 
 impl StripeClient {
     /// Create a new Stripe client from a secret key.
     pub fn new(secret_key: &str) -> Self {
         Self {
-            client: Client::new(secret_key),
+            http: reqwest::Client::new(),
+            secret_key: secret_key.to_string(),
         }
     }
 
     /// Create a Stripe customer for an account.
-    pub async fn create_customer(
-        &self,
-        email: &str,
-        name: &str,
-    ) -> Result<Customer, stripe::StripeError> {
-        let mut params = CreateCustomer::new();
-        params.email = Some(email);
-        params.name = Some(name);
-        Customer::create(&self.client, params).await
+    pub async fn create_customer(&self, email: &str, name: &str) -> Result<StripeCustomer, String> {
+        let resp = self
+            .http
+            .post(format!("{STRIPE_API_BASE}/customers"))
+            .basic_auth(&self.secret_key, None::<&str>)
+            .form(&[("email", email), ("name", name)])
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !resp.status().is_success() {
+            let err: StripeError = resp.json().await.map_err(|e| e.to_string())?;
+            return Err(err.error.message);
+        }
+        resp.json().await.map_err(|e| e.to_string())
     }
 
     /// Create a Checkout Session for subscribing to a plan.
@@ -39,29 +64,33 @@ impl StripeClient {
         price_cents: i64,
         success_url: &str,
         cancel_url: &str,
-    ) -> Result<CheckoutSession, stripe::StripeError> {
-        let mut params = CreateCheckoutSession::new();
-        params.customer = Some(customer_id.parse().unwrap());
-        params.mode = Some(CheckoutSessionMode::Subscription);
-        params.success_url = Some(success_url);
-        params.cancel_url = Some(cancel_url);
-        params.line_items = Some(vec![CreateCheckoutSessionLineItems {
-            quantity: Some(1),
-            price_data: Some(CreateCheckoutSessionLineItemsPriceData {
-                currency: Currency::USD,
-                product_data: Some(CreateCheckoutSessionLineItemsPriceDataProductData {
-                    name: plan_name.to_string(),
-                    ..Default::default()
-                }),
-                unit_amount: Some(price_cents),
-                recurring: Some(CreateCheckoutSessionLineItemsPriceDataRecurring {
-                    interval: CreateCheckoutSessionLineItemsPriceDataRecurringInterval::Month,
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }]);
-        CheckoutSession::create(&self.client, params).await
+    ) -> Result<StripeCheckoutSession, String> {
+        let resp = self
+            .http
+            .post(format!("{STRIPE_API_BASE}/checkout/sessions"))
+            .basic_auth(&self.secret_key, None::<&str>)
+            .form(&[
+                ("customer", customer_id),
+                ("mode", "subscription"),
+                ("success_url", success_url),
+                ("cancel_url", cancel_url),
+                ("line_items[0][quantity]", "1"),
+                ("line_items[0][price_data][currency]", "usd"),
+                ("line_items[0][price_data][product_data][name]", plan_name),
+                (
+                    "line_items[0][price_data][unit_amount]",
+                    &price_cents.to_string(),
+                ),
+                ("line_items[0][price_data][recurring][interval]", "month"),
+            ])
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !resp.status().is_success() {
+            let err: StripeError = resp.json().await.map_err(|e| e.to_string())?;
+            return Err(err.error.message);
+        }
+        resp.json().await.map_err(|e| e.to_string())
     }
 }

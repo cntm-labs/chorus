@@ -30,7 +30,6 @@ hmac = { version = "0.12", features = ["std"] }
 reqwest = { workspace = true }
 async-trait = { workspace = true }
 hickory-resolver = { workspace = true }
-async-stripe = { version = "0.31", default-features = false, features = ["runtime-tokio-hyper", "billing", "checkout"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
