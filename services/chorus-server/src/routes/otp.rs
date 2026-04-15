@@ -78,7 +78,7 @@ pub async fn send_otp(
         environment: _ctx.environment,
         attempt: 0,
     };
-    crate::queue::enqueue::enqueue_job(&state, &job)
+    crate::queue::enqueue::notify(&state, &job)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

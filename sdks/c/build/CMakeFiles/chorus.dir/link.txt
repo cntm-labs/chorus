@@ -1,0 +1,2 @@
+/usr/bin/ar qc libchorus.a CMakeFiles/chorus.dir/src/chorus.c.o CMakeFiles/chorus.dir/vendor/cJSON.c.o
+/usr/bin/ranlib libchorus.a

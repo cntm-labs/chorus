@@ -119,14 +119,17 @@ async fn deliver_webhook(
     match result {
         Ok(resp) if resp.status().is_success() => {
             tracing::debug!(url, "webhook delivered");
+            metrics::counter!("chorus_webhook_deliveries_total", "event" => event.to_string(), "status" => "success").increment(1);
             true
         }
         Ok(resp) => {
             tracing::warn!(url, status = %resp.status(), "webhook delivery failed");
+            metrics::counter!("chorus_webhook_deliveries_total", "event" => event.to_string(), "status" => "failed").increment(1);
             false
         }
         Err(e) => {
             tracing::warn!(url, error = %e, "webhook HTTP error");
+            metrics::counter!("chorus_webhook_deliveries_total", "event" => event.to_string(), "status" => "error").increment(1);
             false
         }
     }

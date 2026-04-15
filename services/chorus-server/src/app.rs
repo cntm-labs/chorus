@@ -1,5 +1,6 @@
 use axum::routing::{delete, get, post};
 use axum::Router;
+use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -126,7 +127,15 @@ impl AppState {
 
 /// Build the Axum router with all routes and shared state.
 pub fn create_router(state: Arc<AppState>) -> Router {
-    Router::new()
+    create_router_with_metrics(state, None)
+}
+
+/// Build the Axum router with optional Prometheus metrics handle.
+pub fn create_router_with_metrics(
+    state: Arc<AppState>,
+    metrics_handle: Option<PrometheusHandle>,
+) -> Router {
+    let mut router = Router::new()
         .route("/health", get(routes::health::health))
         .route("/v1/sms/send", post(routes::sms::send_sms))
         .route("/v1/email/send", post(routes::email::send_email))
@@ -163,9 +172,22 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route("/v1/billing/plans", get(routes::billing::list_plans))
         .route("/v1/billing/plan", get(routes::billing::get_plan))
-        .route("/v1/billing/checkout", post(routes::billing::create_checkout))
+        .route(
+            "/v1/billing/checkout",
+            post(routes::billing::create_checkout),
+        )
         .route("/v1/billing/usage", get(routes::billing::get_usage))
         .route("/internal/bounces", post(routes::internal::handle_bounce))
         .route("/internal/dns-check", get(routes::internal::dns_check))
-        .with_state(state)
+        .with_state(state);
+
+    if let Some(handle) = metrics_handle {
+        router = router.merge(
+            Router::new()
+                .route("/metrics", get(crate::metrics::handler))
+                .with_state(handle),
+        );
+    }
+
+    router
 }

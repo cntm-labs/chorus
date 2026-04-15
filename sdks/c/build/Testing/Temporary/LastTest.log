@@ -1,0 +1,24 @@
+Start testing: Apr 15 15:02 +07
+----------------------------------------------------------
+1/1 Testing: test_chorus
+1/1 Test: test_chorus
+Command: "/Users/mrbt/Desktop/repository/chorus/sdks/c/build/test_chorus"
+Directory: /Users/mrbt/Desktop/repository/chorus/sdks/c/build
+"test_chorus" start time: Apr 15 15:02 +07
+Output:
+----------------------------------------------------------
+Running C SDK tests...
+  PASS: client create and free
+  PASS: client with custom URL
+  PASS: null client accessors
+  PASS: sms send connection refused
+All tests passed!
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"test_chorus" end time: Apr 15 15:02 +07
+"test_chorus" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Apr 15 15:02 +07
