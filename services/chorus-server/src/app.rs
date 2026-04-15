@@ -1,3 +1,4 @@
+use axum::middleware as axum_middleware;
 use axum::routing::{delete, get, post};
 use axum::Router;
 use metrics_exporter_prometheus::PrometheusHandle;
@@ -179,7 +180,8 @@ pub fn create_router_with_metrics(
         .route("/v1/billing/usage", get(routes::billing::get_usage))
         .route("/internal/bounces", post(routes::internal::handle_bounce))
         .route("/internal/dns-check", get(routes::internal::dns_check))
-        .with_state(state);
+        .with_state(state)
+        .layer(axum_middleware::from_fn(crate::middleware::metrics::track));
 
     if let Some(handle) = metrics_handle {
         router = router.merge(
