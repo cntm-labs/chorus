@@ -46,7 +46,8 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
         .map_err(|e| anyhow::anyhow!("{e}"))?
         .ok_or_else(|| anyhow::anyhow!("message {} not found", job.message_id))?;
 
-    metrics::counter!("chorus_messages_processed_total", "channel" => job.channel.clone()).increment(1);
+    metrics::counter!("chorus_messages_processed_total", "channel" => job.channel.clone())
+        .increment(1);
 
     // Max retries exceeded → DLQ
     if job.attempt >= super::MAX_RETRIES {
@@ -187,7 +188,8 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-            metrics::counter!("chorus_provider_errors_total", "channel" => job.channel.clone()).increment(1);
+            metrics::counter!("chorus_provider_errors_total", "channel" => job.channel.clone())
+                .increment(1);
 
             // Schedule retry with incremented attempt
             let retry_job = super::SendJob {
