@@ -74,6 +74,33 @@ jobs:
         if: inputs.dry-run == 'true'
         run: npm publish --access public --dry-run
 
+  publish-pypi:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install build twine
+
+      - name: Build package
+        run: python -m build
+
+      - name: Publish to PyPI
+        if: inputs.dry-run == 'false'
+        run: twine upload dist/* || echo "::warning::PyPI package already published or failed"
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+
+      - name: Dry run PyPI publish
+        if: inputs.dry-run == 'true'
+        run: twine check dist/*
+
   publish-maven:
     runs-on: ubuntu-latest
     defaults:
