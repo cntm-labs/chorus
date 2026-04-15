@@ -16,6 +16,10 @@ pub struct AccountContext {
     pub key_id: Uuid,
     /// `"live"` or `"test"` — determines whether messages are actually sent.
     pub environment: String,
+    /// Account name (for Stripe customer creation).
+    pub account_name: String,
+    /// Account owner email (for Stripe customer creation).
+    pub account_email: String,
 }
 
 impl FromRequestParts<Arc<AppState>> for AccountContext {
@@ -69,6 +73,8 @@ impl FromRequestParts<Arc<AppState>> for AccountContext {
             account_id: account.id,
             key_id: api_key.id,
             environment: api_key.environment,
+            account_name: account.name,
+            account_email: account.owner_email,
         })
     }
 }

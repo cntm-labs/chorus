@@ -195,3 +195,40 @@ impl BillingRepository for PgBillingRepository {
         .map_err(|e| DbError::Internal(e.into()))
     }
 }
+
+/// No-op billing repository for tests and self-hosted mode.
+pub struct NullBillingRepository;
+
+#[async_trait]
+impl BillingRepository for NullBillingRepository {
+    async fn list_plans(&self) -> Result<Vec<BillingPlan>, DbError> {
+        Ok(vec![])
+    }
+    async fn get_plan_by_slug(&self, _slug: &str) -> Result<Option<BillingPlan>, DbError> {
+        Ok(None)
+    }
+    async fn get_subscription(&self, _account_id: Uuid) -> Result<Option<Subscription>, DbError> {
+        Ok(None)
+    }
+    async fn upsert_subscription(
+        &self,
+        _account_id: Uuid,
+        _plan_id: Uuid,
+        _stripe_customer_id: Option<&str>,
+        _stripe_subscription_id: Option<&str>,
+        _period_start: DateTime<Utc>,
+        _period_end: DateTime<Utc>,
+    ) -> Result<Subscription, DbError> {
+        Err(DbError::NotFound)
+    }
+    async fn update_subscription_status(
+        &self,
+        _account_id: Uuid,
+        _status: &str,
+    ) -> Result<(), DbError> {
+        Ok(())
+    }
+    async fn get_usage(&self, _account_id: Uuid) -> Result<Option<Usage>, DbError> {
+        Ok(None)
+    }
+}

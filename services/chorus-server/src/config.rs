@@ -57,6 +57,11 @@ pub struct Config {
 
     /// Shared secret for chorus-mail bounce webhook.
     pub bounce_secret: Option<String>,
+
+    /// Stripe secret key for billing integration.
+    pub stripe_secret_key: Option<String>,
+    /// Stripe webhook signing secret for verifying Stripe events.
+    pub stripe_webhook_secret: Option<String>,
 }
 
 impl Config {
@@ -100,6 +105,9 @@ impl Config {
             from_email: std::env::var("FROM_EMAIL").ok(),
 
             bounce_secret: std::env::var("BOUNCE_SECRET").ok(),
+
+            stripe_secret_key: std::env::var("STRIPE_SECRET_KEY").ok(),
+            stripe_webhook_secret: std::env::var("STRIPE_WEBHOOK_SECRET").ok(),
         }
     }
 }

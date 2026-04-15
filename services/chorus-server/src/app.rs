@@ -4,6 +4,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::config::Config;
+use crate::db::billing::{BillingRepository, PgBillingRepository};
 use crate::db::postgres::PgRepository;
 use crate::db::provider_config::PgProviderConfigRepository;
 use crate::db::webhook::PgWebhookRepository;
@@ -33,6 +34,8 @@ pub struct AppState {
     provider_config_repo: Arc<dyn ProviderConfigRepository>,
     /// Webhook repository.
     webhook_repo: Arc<dyn WebhookRepository>,
+    /// Billing repository.
+    billing_repo: Arc<dyn BillingRepository>,
 }
 
 impl AppState {
@@ -41,6 +44,7 @@ impl AppState {
         let repo = Arc::new(PgRepository::new(db.clone()));
         let provider_config_repo = Arc::new(PgProviderConfigRepository::new(db.clone()));
         let webhook_repo = Arc::new(PgWebhookRepository::new(db.clone()));
+        let billing_repo = Arc::new(PgBillingRepository::new(db.clone()));
         Self {
             db: Some(db),
             redis,
@@ -51,6 +55,7 @@ impl AppState {
             api_key_repo: repo,
             provider_config_repo,
             webhook_repo,
+            billing_repo,
         }
     }
 
@@ -74,6 +79,7 @@ impl AppState {
             api_key_repo,
             provider_config_repo,
             webhook_repo,
+            billing_repo: Arc::new(crate::db::billing::NullBillingRepository),
         }
     }
 
@@ -100,6 +106,11 @@ impl AppState {
     /// Access the webhook repository.
     pub fn webhook_repo(&self) -> Arc<dyn WebhookRepository> {
         Arc::clone(&self.webhook_repo)
+    }
+
+    /// Access the billing repository.
+    pub fn billing_repo(&self) -> Arc<dyn BillingRepository> {
+        Arc::clone(&self.billing_repo)
     }
 
     /// Access the shared HTTP client.
@@ -150,6 +161,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/v1/email/send-batch",
             post(routes::batch::send_email_batch),
         )
+        .route("/v1/billing/plans", get(routes::billing::list_plans))
+        .route("/v1/billing/plan", get(routes::billing::get_plan))
+        .route("/v1/billing/checkout", post(routes::billing::create_checkout))
+        .route("/v1/billing/usage", get(routes::billing::get_usage))
         .route("/internal/bounces", post(routes::internal::handle_bounce))
         .route("/internal/dns-check", get(routes::internal::dns_check))
         .with_state(state)
