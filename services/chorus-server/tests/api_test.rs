@@ -573,3 +573,70 @@ async fn email_batch_exceeds_max_returns_400() {
 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
+
+// ---------------------------------------------------------------------------
+// Billing tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn billing_plans_returns_200() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/billing/plans")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = response_body(resp).await;
+    assert!(body["plans"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn billing_usage_returns_200() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/billing/usage")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn billing_checkout_without_stripe_returns_503() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/billing/checkout")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::from(
+                    r#"{"plan_slug":"starter","success_url":"https://example.com/ok","cancel_url":"https://example.com/cancel"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // No STRIPE_SECRET_KEY configured → 503
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}

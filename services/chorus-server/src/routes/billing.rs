@@ -90,11 +90,10 @@ pub async fn create_checkout(
     ctx: AccountContext,
     Json(req): Json<CheckoutRequest>,
 ) -> Result<(StatusCode, Json<CheckoutResponse>), (StatusCode, String)> {
-    let stripe_key = state
-        .config()
-        .stripe_secret_key
-        .as_ref()
-        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "billing not configured".into()))?;
+    let stripe_key = state.config().stripe_secret_key.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "billing not configured".into(),
+    ))?;
 
     let billing = state.billing_repo();
 

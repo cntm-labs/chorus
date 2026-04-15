@@ -176,12 +176,14 @@ impl BillingRepository for PgBillingRepository {
         account_id: Uuid,
         status: &str,
     ) -> Result<(), DbError> {
-        sqlx::query("UPDATE subscriptions SET status = $1 WHERE account_id = $2 AND status = 'active'")
-            .bind(status)
-            .bind(account_id)
-            .execute(&self.db)
-            .await
-            .map_err(|e| DbError::Internal(e.into()))?;
+        sqlx::query(
+            "UPDATE subscriptions SET status = $1 WHERE account_id = $2 AND status = 'active'",
+        )
+        .bind(status)
+        .bind(account_id)
+        .execute(&self.db)
+        .await
+        .map_err(|e| DbError::Internal(e.into()))?;
         Ok(())
     }
 
