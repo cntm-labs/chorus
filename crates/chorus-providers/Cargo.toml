@@ -1,6 +1,6 @@
 [package]
 name = "chorus-providers"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 description = "SMS and Email provider implementations for Chorus CPaaS — Telnyx, Twilio, Plivo, Resend, SES, SMTP"
@@ -12,7 +12,7 @@ readme = "README.md"
 rust-version = "1.85.0"
 
 [dependencies]
-chorus-core = { path = "../chorus-core", version = "0.2.0" }
+chorus-core = { path = "../chorus-core", version = "0.3.0" }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -14,6 +14,7 @@
 [![crates.io chorus-providers](https://img.shields.io/crates/v/chorus-providers?label=chorus-providers&color=fc8d62)](https://crates.io/crates/chorus-providers)
 [![npm @cntm-labs/chorus](https://img.shields.io/npm/v/@cntm-labs/chorus?label=@cntm-labs/chorus&color=cb3837)](https://www.npmjs.com/package/@cntm-labs/chorus)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.cntm-labs/chorus?label=io.github.cntm-labs:chorus&color=C71A36)](https://central.sonatype.com/artifact/io.github.cntm-labs/chorus)
+[![PyPI chorus-sdk](https://img.shields.io/pypi/v/chorus-sdk?label=chorus-sdk&color=3776AB)](https://pypi.org/project/chorus-sdk)
 [![docs.rs](https://img.shields.io/docsrs/chorus-rs?label=docs.rs)](https://docs.rs/chorus-rs)
 
 [![Rust](https://img.shields.io/badge/Rust-2k_LOC-dea584?logo=rust&logoColor=white)](crates/)
@@ -40,7 +41,9 @@ Rust backend (Axum) with waterfall routing — OTP and notifications via email f
 - **Batch send** — send SMS or Email to multiple recipients in one call
 - **Webhooks** — real-time delivery status notifications with HMAC-SHA256 signatures
 - **Template engine** — `{{variable}}` syntax with OTP generation
-- **SDKs** — Rust, TypeScript, Java (Go, Python, C coming soon)
+- **SDKs** — Rust, TypeScript, Java, Go, Python, C
+- **Billing** — Stripe integration with plans, subscriptions, and usage tracking
+- **Monitoring** — Prometheus metrics (`/metrics`), JSON logging for Loki, health checks
 - **Test mode** — `ch_test_` API keys log only, never send real messages
 - **Self-hosted free** — MIT license, no billing when self-hosted
 
@@ -81,9 +84,9 @@ sdks/
 ├── rust/                # Native SDK (chorus-rs, re-exports chorus-core + providers)
 ├── typescript/          # Node.js + Browser (@cntm-labs/chorus)
 ├── java/                # Java 11+ (com.cntm-labs:chorus)
-├── go/                  # Coming soon
-├── python/              # Coming soon
-└── c/                   # Coming soon
+├── go/                  # Go 1.22+ (github.com/cntm-labs/chorus/sdks/go)
+├── python/              # Python 3.10+ (chorus-sdk on PyPI)
+└── c/                   # C11 with libcurl (libchorus)
 ```
 
 ## Development
