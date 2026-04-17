@@ -31,3 +31,15 @@ pub struct SendJob {
     /// Current attempt number (0-based, incremented on retry).
     pub attempt: i32,
 }
+
+/// Record Redis operation duration.
+macro_rules! record_redis_duration {
+    ($op:expr, $start:expr) => {
+        metrics::histogram!(
+            "chorus_redis_operation_duration_seconds",
+            "operation" => $op,
+        )
+        .record($start.elapsed().as_secs_f64());
+    };
+}
+pub(crate) use record_redis_duration;

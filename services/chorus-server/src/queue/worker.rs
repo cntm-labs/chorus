@@ -1,9 +1,19 @@
 use chorus_core::types::{EmailMessage, SmsMessage};
 use chrono::Utc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::app::AppState;
 use crate::config::Config;
+
+/// RAII guard that decrements the worker-active gauge when dropped.
+struct WorkerGuard;
+
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        metrics::gauge!("chorus_worker_active").decrement(1.0);
+    }
+}
 
 /// Spawn N worker tasks that process jobs from the main queue.
 pub fn spawn_workers(state: Arc<AppState>, config: Arc<Config>, concurrency: usize) {
@@ -24,13 +34,18 @@ pub fn spawn_workers(state: Arc<AppState>, config: Arc<Config>, concurrency: usi
 
 /// Block-pop the next job from Redis and process it.
 async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Result<()> {
+    metrics::gauge!("chorus_worker_active").increment(1.0);
+    let _guard = WorkerGuard;
+
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
 
+    let brpop_start = Instant::now();
     let result: Option<(String, String)> = redis::cmd("BRPOP")
         .arg(super::QUEUE_KEY)
         .arg(5)
         .query_async(&mut conn)
         .await?;
+    super::record_redis_duration!("brpop", brpop_start);
 
     let Some((_key, payload)) = result else {
         return Ok(());
@@ -109,6 +124,7 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
     };
 
     // Send via chorus-core
+    let send_start = Instant::now();
     let send_result = match job.channel.as_str() {
         "sms" => {
             let msg = SmsMessage {
@@ -130,6 +146,7 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
         }
         _ => anyhow::bail!("unknown channel: {}", job.channel),
     };
+    let send_duration = send_start.elapsed().as_secs_f64();
 
     match send_result {
         Ok(result) => {
@@ -172,6 +189,25 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
 
             metrics::counter!("chorus_messages_total", "channel" => job.channel.clone(), "status" => "delivered", "provider" => result.provider.clone()).increment(1);
 
+            metrics::histogram!(
+                "chorus_provider_latency_seconds",
+                "channel" => job.channel.clone(),
+                "provider" => result.provider.clone(),
+            )
+            .record(send_duration);
+
+            let cost = match job.channel.as_str() {
+                "sms" => 7500_u64,
+                "email" => 1000_u64,
+                _ => 0,
+            };
+            metrics::counter!(
+                "chorus_message_cost_microdollars_total",
+                "channel" => job.channel.clone(),
+                "provider" => result.provider.clone(),
+            )
+            .increment(cost);
+
             // Dispatch webhook
             let webhook_payload = super::webhook_dispatch::WebhookPayload {
                 event: "message.delivered".into(),
@@ -205,8 +241,19 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-            metrics::counter!("chorus_provider_errors_total", "channel" => job.channel.clone())
-                .increment(1);
+            metrics::counter!(
+                "chorus_provider_errors_total",
+                "channel" => job.channel.clone(),
+                "provider" => "unknown",
+            )
+            .increment(1);
+
+            metrics::histogram!(
+                "chorus_provider_latency_seconds",
+                "channel" => job.channel.clone(),
+                "provider" => "unknown",
+            )
+            .record(send_duration);
 
             // Schedule retry with incremented attempt
             let retry_job = super::SendJob {

@@ -1,5 +1,6 @@
 use chrono::Utc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::app::AppState;
 
@@ -7,11 +8,13 @@ use crate::app::AppState;
 pub async fn job(state: &AppState, job: &super::SendJob) -> anyhow::Result<()> {
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
     let payload = serde_json::to_string(job)?;
+    let start = Instant::now();
     redis::cmd("LPUSH")
         .arg(super::QUEUE_KEY)
         .arg(payload)
         .query_async::<i64>(&mut conn)
         .await?;
+    super::record_redis_duration!("lpush", start);
     Ok(())
 }
 
