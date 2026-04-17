@@ -288,4 +288,45 @@ impl AdminRepository for NullAdminRepository {
     ) -> Result<u64, crate::db::DbError> {
         Ok(0)
     }
+    async fn get_message_by_id(
+        &self,
+        _id: uuid::Uuid,
+    ) -> Result<Option<crate::db::Message>, crate::db::DbError> {
+        Ok(None)
+    }
+    async fn search_messages(
+        &self,
+        _filters: &crate::routes::admin::messages::MessageSearchFilters,
+    ) -> Result<Vec<crate::db::Message>, crate::db::DbError> {
+        Ok(vec![])
+    }
+    async fn list_billing_accounts(
+        &self,
+    ) -> Result<Vec<crate::routes::admin::billing::BillingAccountSummary>, crate::db::DbError> {
+        Ok(vec![])
+    }
+    async fn override_plan(
+        &self,
+        _account_id: uuid::Uuid,
+        _plan_slug: &str,
+    ) -> Result<(), crate::db::DbError> {
+        Ok(())
+    }
+    async fn adjust_usage(
+        &self,
+        _account_id: uuid::Uuid,
+        _sms_delta: Option<i32>,
+        _email_delta: Option<i32>,
+    ) -> Result<(), crate::db::DbError> {
+        Ok(())
+    }
+    async fn billing_report(
+        &self,
+    ) -> Result<crate::routes::admin::billing::BillingReport, crate::db::DbError> {
+        Ok(crate::routes::admin::billing::BillingReport {
+            total_revenue_cents: 0,
+            accounts_by_plan: vec![],
+            overage_accounts: vec![],
+        })
+    }
 }
