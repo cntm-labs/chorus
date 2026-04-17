@@ -194,6 +194,18 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
             )
             .record(send_duration);
 
+            let cost = match job.channel.as_str() {
+                "sms" => 7500_u64,
+                "email" => 1000_u64,
+                _ => 0,
+            };
+            metrics::counter!(
+                "chorus_message_cost_microdollars_total",
+                "channel" => job.channel.clone(),
+                "provider" => result.provider.clone(),
+            )
+            .increment(cost);
+
             // Dispatch webhook
             let webhook_payload = super::webhook_dispatch::WebhookPayload {
                 event: "message.delivered".into(),
