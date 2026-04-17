@@ -1,7 +1,10 @@
+pub mod admin;
 pub mod billing;
 pub mod postgres;
 pub mod provider_config;
 pub mod webhook;
+
+pub use admin::{AdminRepository, PgAdminRepository};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
