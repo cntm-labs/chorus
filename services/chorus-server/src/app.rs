@@ -11,8 +11,8 @@ use crate::db::postgres::PgRepository;
 use crate::db::provider_config::PgProviderConfigRepository;
 use crate::db::webhook::PgWebhookRepository;
 use crate::db::{
-    AccountRepository, ApiKeyRepository, MessageRepository, ProviderConfigRepository,
-    WebhookRepository,
+    AccountRepository, AdminKeyRepository, ApiKeyRepository, MessageRepository,
+    ProviderConfigRepository, WebhookRepository,
 };
 use crate::routes;
 
@@ -38,6 +38,8 @@ pub struct AppState {
     webhook_repo: Arc<dyn WebhookRepository>,
     /// Billing repository.
     billing_repo: Arc<dyn BillingRepository>,
+    /// Admin key repository.
+    admin_key_repo: Arc<dyn AdminKeyRepository>,
 }
 
 impl AppState {
@@ -54,7 +56,8 @@ impl AppState {
             config,
             account_repo: repo.clone(),
             message_repo: repo.clone(),
-            api_key_repo: repo,
+            api_key_repo: repo.clone(),
+            admin_key_repo: repo,
             provider_config_repo,
             webhook_repo,
             billing_repo,
@@ -82,6 +85,7 @@ impl AppState {
             provider_config_repo,
             webhook_repo,
             billing_repo: Arc::new(crate::db::billing::NullBillingRepository),
+            admin_key_repo: Arc::new(NullAdminKeyRepository),
         }
     }
 
@@ -113,6 +117,11 @@ impl AppState {
     /// Access the billing repository.
     pub fn billing_repo(&self) -> Arc<dyn BillingRepository> {
         Arc::clone(&self.billing_repo)
+    }
+
+    /// Access the admin key repository.
+    pub fn admin_key_repo(&self) -> Arc<dyn AdminKeyRepository> {
+        Arc::clone(&self.admin_key_repo)
     }
 
     /// Access the shared HTTP client.
@@ -192,4 +201,14 @@ pub fn create_router_with_metrics(
     }
 
     router
+}
+
+/// No-op admin key repository for tests.
+struct NullAdminKeyRepository;
+
+#[async_trait::async_trait]
+impl AdminKeyRepository for NullAdminKeyRepository {
+    async fn find_by_hash(&self, _hash: &str) -> Result<Option<crate::db::AdminKey>, crate::db::DbError> {
+        Ok(None)
+    }
 }
