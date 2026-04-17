@@ -39,11 +39,13 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
 
     let mut conn = state.redis.get_multiplexed_tokio_connection().await?;
 
+    let brpop_start = Instant::now();
     let result: Option<(String, String)> = redis::cmd("BRPOP")
         .arg(super::QUEUE_KEY)
         .arg(5)
         .query_async(&mut conn)
         .await?;
+    super::record_redis_duration!("brpop", brpop_start);
 
     let Some((_key, payload)) = result else {
         return Ok(());
