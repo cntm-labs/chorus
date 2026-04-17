@@ -1,6 +1,18 @@
 use async_trait::async_trait;
 use sqlx::PgPool;
+use std::time::Instant;
 use uuid::Uuid;
+
+/// Record DB query duration for a given operation.
+macro_rules! record_db_duration {
+    ($op:expr, $start:expr) => {
+        metrics::histogram!(
+            "chorus_db_query_duration_seconds",
+            "operation" => $op,
+        )
+        .record($start.elapsed().as_secs_f64());
+    };
+}
 
 use super::{
     Account, AccountRepository, ApiKey, ApiKeyRepository, DbError, DeliveryEvent, Message,
@@ -63,6 +75,7 @@ impl AccountRepository for PgRepository {
 #[async_trait]
 impl MessageRepository for PgRepository {
     async fn insert(&self, msg: &NewMessage) -> Result<Message, DbError> {
+        let start = Instant::now();
         let message = sqlx::query_as::<_, Message>(
             "INSERT INTO messages (account_id, api_key_id, channel, sender, recipient, subject, body, environment)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -79,11 +92,13 @@ impl MessageRepository for PgRepository {
         .fetch_one(&self.pool)
         .await
         .map_err(|e| DbError::Internal(e.into()))?;
+        record_db_duration!("insert_message", start);
 
         Ok(message)
     }
 
     async fn find_by_id(&self, id: Uuid, account_id: Uuid) -> Result<Option<Message>, DbError> {
+        let start = Instant::now();
         let msg = sqlx::query_as::<_, Message>(
             "SELECT * FROM messages WHERE id = $1 AND account_id = $2",
         )
@@ -92,6 +107,7 @@ impl MessageRepository for PgRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| DbError::Internal(e.into()))?;
+        record_db_duration!("find_by_id", start);
 
         Ok(msg)
     }
@@ -124,6 +140,7 @@ impl MessageRepository for PgRepository {
         provider_message_id: Option<&str>,
         error_message: Option<&str>,
     ) -> Result<(), DbError> {
+        let start = Instant::now();
         sqlx::query(
             "UPDATE messages SET status = $1, provider = $2, provider_message_id = $3,
              error_message = $4, attempts = attempts + 1,
@@ -138,6 +155,7 @@ impl MessageRepository for PgRepository {
         .execute(&self.pool)
         .await
         .map_err(|e| DbError::Internal(e.into()))?;
+        record_db_duration!("update_status", start);
 
         Ok(())
     }
@@ -148,6 +166,7 @@ impl MessageRepository for PgRepository {
         status: &str,
         provider_data: Option<serde_json::Value>,
     ) -> Result<(), DbError> {
+        let start = Instant::now();
         sqlx::query(
             "INSERT INTO delivery_events (message_id, status, provider_data)
              VALUES ($1, $2, $3)",
@@ -158,6 +177,7 @@ impl MessageRepository for PgRepository {
         .execute(&self.pool)
         .await
         .map_err(|e| DbError::Internal(e.into()))?;
+        record_db_duration!("insert_delivery_event", start);
 
         Ok(())
     }
