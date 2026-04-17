@@ -2,11 +2,12 @@ use async_trait::async_trait;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::{DbError, Message};
+use super::{DbError, Message, Webhook};
 use crate::routes::admin::accounts::{AccountDetail, AccountListItem};
 use crate::routes::admin::billing::{BillingAccountSummary, BillingReport, PlanCount};
 use crate::routes::admin::messages::MessageSearchFilters;
 use crate::routes::admin::providers::{AdminProviderConfig, ProviderHealth};
+use crate::routes::admin::webhooks::{AdminWebhook, WebhookDelivery};
 
 /// Repository for admin-only cross-account queries.
 #[async_trait]
@@ -48,7 +49,10 @@ pub trait AdminRepository: Send + Sync {
     /// Get a message by ID without account scoping (admin-only).
     async fn get_message_by_id(&self, id: Uuid) -> Result<Option<Message>, DbError>;
     /// Search messages across all accounts with filters.
-    async fn search_messages(&self, filters: &MessageSearchFilters) -> Result<Vec<Message>, DbError>;
+    async fn search_messages(
+        &self,
+        filters: &MessageSearchFilters,
+    ) -> Result<Vec<Message>, DbError>;
 
     // --- Billing (#38) ---
 
@@ -65,6 +69,24 @@ pub trait AdminRepository: Send + Sync {
     ) -> Result<(), DbError>;
     /// Generate billing report.
     async fn billing_report(&self) -> Result<BillingReport, DbError>;
+
+    // --- Webhook (#39) ---
+
+    /// List all webhooks across all accounts.
+    async fn list_all_webhooks(&self) -> Result<Vec<AdminWebhook>, DbError>;
+    /// Get a webhook by ID (admin, no account scoping).
+    async fn get_webhook_by_id(&self, id: Uuid) -> Result<Option<Webhook>, DbError>;
+    /// Get webhook delivery log.
+    async fn get_webhook_deliveries(
+        &self,
+        webhook_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<WebhookDelivery>, DbError>;
+    /// Enable/disable a webhook.
+    async fn update_webhook_status(&self, id: Uuid, is_active: bool) -> Result<(), DbError>;
+    /// Disable all webhooks for an account.
+    async fn disable_account_webhooks(&self, account_id: Uuid) -> Result<u64, DbError>;
 }
 
 /// PostgreSQL implementation of admin repository.
@@ -439,5 +461,73 @@ impl AdminRepository for PgAdminRepository {
             accounts_by_plan,
             overage_accounts: overage_rows.into_iter().map(|r| r.0).collect(),
         })
+    }
+
+    async fn list_all_webhooks(&self) -> Result<Vec<AdminWebhook>, DbError> {
+        let rows = sqlx::query_as::<_, AdminWebhook>(
+            "SELECT id, account_id, url, events, is_active, created_at
+             FROM webhooks ORDER BY account_id, created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError::Internal(e.into()))?;
+
+        Ok(rows)
+    }
+
+    async fn get_webhook_by_id(&self, id: Uuid) -> Result<Option<Webhook>, DbError> {
+        let webhook = sqlx::query_as::<_, Webhook>(
+            "SELECT id, account_id, url, secret, events, is_active, created_at
+             FROM webhooks WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError::Internal(e.into()))?;
+
+        Ok(webhook)
+    }
+
+    async fn get_webhook_deliveries(
+        &self,
+        webhook_id: Uuid,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<WebhookDelivery>, DbError> {
+        let rows = sqlx::query_as::<_, WebhookDelivery>(
+            "SELECT id, webhook_id, event, payload, response_status, response_body,
+                    attempt, success, created_at
+             FROM webhook_deliveries WHERE webhook_id = $1
+             ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        )
+        .bind(webhook_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DbError::Internal(e.into()))?;
+
+        Ok(rows)
+    }
+
+    async fn update_webhook_status(&self, id: Uuid, is_active: bool) -> Result<(), DbError> {
+        sqlx::query("UPDATE webhooks SET is_active = $1 WHERE id = $2")
+            .bind(is_active)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Internal(e.into()))?;
+
+        Ok(())
+    }
+
+    async fn disable_account_webhooks(&self, account_id: Uuid) -> Result<u64, DbError> {
+        let result = sqlx::query("UPDATE webhooks SET is_active = false WHERE account_id = $1")
+            .bind(account_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DbError::Internal(e.into()))?;
+
+        Ok(result.rows_affected())
     }
 }

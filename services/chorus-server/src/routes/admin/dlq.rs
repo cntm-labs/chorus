@@ -84,11 +84,7 @@ pub async fn list(
         }
 
         // Look up message details from DB (no account_id scoping — admin query)
-        if let Ok(Some(msg)) = state
-            .admin_repo()
-            .get_message_by_id(job.message_id)
-            .await
-        {
+        if let Ok(Some(msg)) = state.admin_repo().get_message_by_id(job.message_id).await {
             results.push(DlqMessage {
                 message_id: msg.id,
                 account_id: msg.account_id,
@@ -149,10 +145,7 @@ pub async fn retry_single(
         .ok_or((StatusCode::NOT_FOUND, "message not in DLQ".into()))?;
 
     // Re-enqueue with reset attempt counter
-    let retry_job = SendJob {
-        attempt: 0,
-        ..job
-    };
+    let retry_job = SendJob { attempt: 0, ..job };
     let payload = serde_json::to_string(&retry_job)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -197,10 +190,7 @@ pub async fn retry_batch(
     for mid in &body.message_ids {
         match find_and_remove_from_dlq(&mut conn, *mid).await {
             Ok(Some(job)) => {
-                let retry_job = SendJob {
-                    attempt: 0,
-                    ..job
-                };
+                let retry_job = SendJob { attempt: 0, ..job };
                 let payload = serde_json::to_string(&retry_job)
                     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
                 redis::cmd("LPUSH")

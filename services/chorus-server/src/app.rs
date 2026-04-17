@@ -282,10 +282,7 @@ impl AdminRepository for NullAdminRepository {
     ) -> Result<(), crate::db::DbError> {
         Ok(())
     }
-    async fn disable_provider_by_name(
-        &self,
-        _provider: &str,
-    ) -> Result<u64, crate::db::DbError> {
+    async fn disable_provider_by_name(&self, _provider: &str) -> Result<u64, crate::db::DbError> {
         Ok(0)
     }
     async fn get_message_by_id(
@@ -328,5 +325,37 @@ impl AdminRepository for NullAdminRepository {
             accounts_by_plan: vec![],
             overage_accounts: vec![],
         })
+    }
+    async fn list_all_webhooks(
+        &self,
+    ) -> Result<Vec<crate::routes::admin::webhooks::AdminWebhook>, crate::db::DbError> {
+        Ok(vec![])
+    }
+    async fn get_webhook_by_id(
+        &self,
+        _id: uuid::Uuid,
+    ) -> Result<Option<crate::db::Webhook>, crate::db::DbError> {
+        Ok(None)
+    }
+    async fn get_webhook_deliveries(
+        &self,
+        _webhook_id: uuid::Uuid,
+        _limit: i64,
+        _offset: i64,
+    ) -> Result<Vec<crate::routes::admin::webhooks::WebhookDelivery>, crate::db::DbError> {
+        Ok(vec![])
+    }
+    async fn update_webhook_status(
+        &self,
+        _id: uuid::Uuid,
+        _is_active: bool,
+    ) -> Result<(), crate::db::DbError> {
+        Ok(())
+    }
+    async fn disable_account_webhooks(
+        &self,
+        _account_id: uuid::Uuid,
+    ) -> Result<u64, crate::db::DbError> {
+        Ok(0)
     }
 }

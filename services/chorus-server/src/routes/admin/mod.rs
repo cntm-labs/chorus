@@ -3,6 +3,7 @@ pub mod billing;
 pub mod dlq;
 pub mod messages;
 pub mod providers;
+pub mod webhooks;
 
 use axum::routing::{delete, get, post};
 use axum::Router;
@@ -28,7 +29,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/providers/disable", post(providers::bulk_disable))
         // DLQ Management (#36)
         .route("/dlq", get(dlq::list))
-        .route("/dlq/{message_id}", get(dlq::detail).delete(dlq::purge_single))
+        .route(
+            "/dlq/{message_id}",
+            get(dlq::detail).delete(dlq::purge_single),
+        )
         .route("/dlq/{message_id}/retry", post(dlq::retry_single))
         .route("/dlq/retry-batch", post(dlq::retry_batch))
         .route("/dlq/purge", delete(dlq::purge_all))
@@ -46,4 +50,16 @@ pub fn router() -> Router<Arc<AppState>> {
             axum::routing::patch(billing::adjust_usage),
         )
         .route("/billing/reports", get(billing::report))
+        // Webhook Admin (#39)
+        .route("/webhooks", get(webhooks::list_all))
+        .route(
+            "/webhooks/{id}",
+            axum::routing::patch(webhooks::update_status),
+        )
+        .route("/webhooks/{id}/deliveries", get(webhooks::deliveries))
+        .route("/webhooks/{id}/test", post(webhooks::test_webhook))
+        .route(
+            "/webhooks/disable-account/{account_id}",
+            post(webhooks::disable_account),
+        )
 }
