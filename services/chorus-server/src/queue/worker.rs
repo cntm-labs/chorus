@@ -2,6 +2,7 @@ use chorus_core::types::{EmailMessage, SmsMessage};
 use chrono::Utc;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::Instrument;
 
 use crate::app::AppState;
 use crate::config::Config;
@@ -52,217 +53,234 @@ async fn process_next_job(state: &Arc<AppState>, config: &Config) -> anyhow::Res
     };
 
     let job: super::SendJob = serde_json::from_str(&payload)?;
-    let repo = state.message_repo();
 
-    // Load the message from DB
-    let message = repo
-        .find_by_id(job.message_id, job.account_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-        .ok_or_else(|| anyhow::anyhow!("message {} not found", job.message_id))?;
+    let span = tracing::info_span!(
+        "process_job",
+        message_id = %job.message_id,
+        account_id = %job.account_id,
+        channel = %job.channel,
+        environment = %job.environment,
+        attempt = job.attempt,
+        provider = tracing::field::Empty,
+    );
 
-    metrics::counter!("chorus_messages_processed_total", "channel" => job.channel.clone())
-        .increment(1);
+    async {
+        let repo = state.message_repo();
 
-    // Max retries exceeded → DLQ
-    if job.attempt >= super::MAX_RETRIES {
-        repo.update_status(
-            job.message_id,
-            "failed",
-            None,
-            None,
-            Some("max retries exceeded"),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-        repo.insert_delivery_event(
-            job.message_id,
-            "failed",
-            Some(serde_json::json!({"reason": "max retries exceeded", "attempts": job.attempt})),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-        // Dispatch webhook for failure
-        let webhook_payload = super::webhook_dispatch::WebhookPayload {
-            event: "message.failed".into(),
-            message_id: job.message_id,
-            channel: job.channel.clone(),
-            provider: None,
-            status: "failed".into(),
-            timestamp: Utc::now().to_rfc3339(),
-        };
-        super::webhook_dispatch::dispatch_webhooks(
-            state,
-            job.account_id,
-            "message.failed",
-            &webhook_payload,
-        )
-        .await;
-
-        metrics::counter!("chorus_messages_total", "channel" => job.channel.clone(), "status" => "failed").increment(1);
-        super::dead_letter::push_to_dlq(&state.redis, &job).await?;
-        return Ok(());
-    }
-
-    // Build router based on environment
-    let router = if job.environment == "test" {
-        super::router_builder::build_test_router(&job.channel)
-    } else {
-        // Try per-account config, fall back to env defaults
-        let configs = state
-            .provider_config_repo()
-            .list_by_account_channel(job.account_id, &job.channel)
+        // Load the message from DB
+        let message = repo
+            .find_by_id(job.message_id, job.account_id)
             .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+            .ok_or_else(|| anyhow::anyhow!("message {} not found", job.message_id))?;
 
-        if configs.is_empty() {
-            super::router_builder::build_router_from_env(config, &job.channel)?
-        } else {
-            super::router_builder::build_router_from_configs(&configs)?
-        }
-    };
+        metrics::counter!("chorus_messages_processed_total", "channel" => job.channel.clone())
+            .increment(1);
 
-    // Send via chorus-core
-    let send_start = Instant::now();
-    let send_result = match job.channel.as_str() {
-        "sms" => {
-            let msg = SmsMessage {
-                to: message.recipient.clone(),
-                body: message.body.clone(),
-                from: message.sender.clone(),
-            };
-            router.send_sms(&msg).await
-        }
-        "email" => {
-            let msg = EmailMessage {
-                to: message.recipient.clone(),
-                subject: message.subject.clone().unwrap_or_default(),
-                html_body: message.body.clone(),
-                text_body: message.body.clone(),
-                from: message.sender.clone(),
-            };
-            router.send_email(&msg).await
-        }
-        _ => anyhow::bail!("unknown channel: {}", job.channel),
-    };
-    let send_duration = send_start.elapsed().as_secs_f64();
-
-    match send_result {
-        Ok(result) => {
-            // Dispatch message.sent (provider accepted)
-            let sent_payload = super::webhook_dispatch::WebhookPayload {
-                event: "message.sent".into(),
-                message_id: job.message_id,
-                channel: job.channel.clone(),
-                provider: Some(result.provider.clone()),
-                status: "sent".into(),
-                timestamp: Utc::now().to_rfc3339(),
-            };
-            super::webhook_dispatch::dispatch_webhooks(
-                state,
-                job.account_id,
-                "message.sent",
-                &sent_payload,
-            )
-            .await;
-
+        // Max retries exceeded → DLQ
+        if job.attempt >= super::MAX_RETRIES {
             repo.update_status(
                 job.message_id,
-                "delivered",
-                Some(&result.provider),
-                Some(&result.message_id),
+                "failed",
                 None,
+                None,
+                Some("max retries exceeded"),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             repo.insert_delivery_event(
                 job.message_id,
-                "delivered",
-                Some(serde_json::json!({
-                    "provider": result.provider,
-                    "provider_message_id": result.message_id,
-                })),
+                "failed",
+                Some(serde_json::json!({"reason": "max retries exceeded", "attempts": job.attempt})),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-            metrics::counter!("chorus_messages_total", "channel" => job.channel.clone(), "status" => "delivered", "provider" => result.provider.clone()).increment(1);
-
-            metrics::histogram!(
-                "chorus_provider_latency_seconds",
-                "channel" => job.channel.clone(),
-                "provider" => result.provider.clone(),
-            )
-            .record(send_duration);
-
-            let cost = match job.channel.as_str() {
-                "sms" => 7500_u64,
-                "email" => 1000_u64,
-                _ => 0,
-            };
-            metrics::counter!(
-                "chorus_message_cost_microdollars_total",
-                "channel" => job.channel.clone(),
-                "provider" => result.provider.clone(),
-            )
-            .increment(cost);
-
-            // Dispatch webhook
+            // Dispatch webhook for failure
             let webhook_payload = super::webhook_dispatch::WebhookPayload {
-                event: "message.delivered".into(),
+                event: "message.failed".into(),
                 message_id: job.message_id,
                 channel: job.channel.clone(),
-                provider: Some(result.provider.clone()),
-                status: "delivered".into(),
+                provider: None,
+                status: "failed".into(),
                 timestamp: Utc::now().to_rfc3339(),
             };
             super::webhook_dispatch::dispatch_webhooks(
                 state,
                 job.account_id,
-                "message.delivered",
+                "message.failed",
                 &webhook_payload,
             )
             .await;
+
+            metrics::counter!("chorus_messages_total", "channel" => job.channel.clone(), "status" => "failed").increment(1);
+            super::dead_letter::push_to_dlq(&state.redis, &job).await?;
+            return Ok(());
         }
-        Err(e) => {
-            let error_msg = e.to_string();
-            repo.update_status(job.message_id, "retrying", None, None, Some(&error_msg))
+
+        // Build router based on environment
+        let router = if job.environment == "test" {
+            super::router_builder::build_test_router(&job.channel)
+        } else {
+            // Try per-account config, fall back to env defaults
+            let configs = state
+                .provider_config_repo()
+                .list_by_account_channel(job.account_id, &job.channel)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
-            repo.insert_delivery_event(
-                job.message_id,
-                "failed_attempt",
-                Some(serde_json::json!({
-                    "attempt": job.attempt,
-                    "error": error_msg,
-                })),
-            )
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-            metrics::counter!(
-                "chorus_provider_errors_total",
-                "channel" => job.channel.clone(),
-                "provider" => "unknown",
-            )
-            .increment(1);
+            if configs.is_empty() {
+                super::router_builder::build_router_from_env(config, &job.channel)?
+            } else {
+                super::router_builder::build_router_from_configs(&configs)?
+            }
+        };
 
-            metrics::histogram!(
-                "chorus_provider_latency_seconds",
-                "channel" => job.channel.clone(),
-                "provider" => "unknown",
-            )
-            .record(send_duration);
+        // Send via chorus-core
+        let send_start = Instant::now();
+        let send_result = match job.channel.as_str() {
+            "sms" => {
+                let msg = SmsMessage {
+                    to: message.recipient.clone(),
+                    body: message.body.clone(),
+                    from: message.sender.clone(),
+                };
+                router.send_sms(&msg).await
+            }
+            "email" => {
+                let msg = EmailMessage {
+                    to: message.recipient.clone(),
+                    subject: message.subject.clone().unwrap_or_default(),
+                    html_body: message.body.clone(),
+                    text_body: message.body.clone(),
+                    from: message.sender.clone(),
+                };
+                router.send_email(&msg).await
+            }
+            _ => anyhow::bail!("unknown channel: {}", job.channel),
+        };
+        let send_duration = send_start.elapsed().as_secs_f64();
 
-            // Schedule retry with incremented attempt
-            let retry_job = super::SendJob {
-                attempt: job.attempt + 1,
-                ..job
-            };
-            super::delayed::schedule_retry(&state.redis, &retry_job).await?;
+        match send_result {
+            Ok(result) => {
+                tracing::Span::current().record("provider", result.provider.as_str());
+
+                // Dispatch message.sent (provider accepted)
+                let sent_payload = super::webhook_dispatch::WebhookPayload {
+                    event: "message.sent".into(),
+                    message_id: job.message_id,
+                    channel: job.channel.clone(),
+                    provider: Some(result.provider.clone()),
+                    status: "sent".into(),
+                    timestamp: Utc::now().to_rfc3339(),
+                };
+                super::webhook_dispatch::dispatch_webhooks(
+                    state,
+                    job.account_id,
+                    "message.sent",
+                    &sent_payload,
+                )
+                .await;
+
+                repo.update_status(
+                    job.message_id,
+                    "delivered",
+                    Some(&result.provider),
+                    Some(&result.message_id),
+                    None,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+                repo.insert_delivery_event(
+                    job.message_id,
+                    "delivered",
+                    Some(serde_json::json!({
+                        "provider": result.provider,
+                        "provider_message_id": result.message_id,
+                    })),
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                metrics::counter!("chorus_messages_total", "channel" => job.channel.clone(), "status" => "delivered", "provider" => result.provider.clone()).increment(1);
+
+                metrics::histogram!(
+                    "chorus_provider_latency_seconds",
+                    "channel" => job.channel.clone(),
+                    "provider" => result.provider.clone(),
+                )
+                .record(send_duration);
+
+                let cost = match job.channel.as_str() {
+                    "sms" => 7500_u64,
+                    "email" => 1000_u64,
+                    _ => 0,
+                };
+                metrics::counter!(
+                    "chorus_message_cost_microdollars_total",
+                    "channel" => job.channel.clone(),
+                    "provider" => result.provider.clone(),
+                )
+                .increment(cost);
+
+                // Dispatch webhook
+                let webhook_payload = super::webhook_dispatch::WebhookPayload {
+                    event: "message.delivered".into(),
+                    message_id: job.message_id,
+                    channel: job.channel.clone(),
+                    provider: Some(result.provider.clone()),
+                    status: "delivered".into(),
+                    timestamp: Utc::now().to_rfc3339(),
+                };
+                super::webhook_dispatch::dispatch_webhooks(
+                    state,
+                    job.account_id,
+                    "message.delivered",
+                    &webhook_payload,
+                )
+                .await;
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                repo.update_status(job.message_id, "retrying", None, None, Some(&error_msg))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                repo.insert_delivery_event(
+                    job.message_id,
+                    "failed_attempt",
+                    Some(serde_json::json!({
+                        "attempt": job.attempt,
+                        "error": error_msg,
+                    })),
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                metrics::counter!(
+                    "chorus_provider_errors_total",
+                    "channel" => job.channel.clone(),
+                    "provider" => "unknown",
+                )
+                .increment(1);
+
+                metrics::histogram!(
+                    "chorus_provider_latency_seconds",
+                    "channel" => job.channel.clone(),
+                    "provider" => "unknown",
+                )
+                .record(send_duration);
+
+                // Schedule retry with incremented attempt
+                let retry_job = super::SendJob {
+                    attempt: job.attempt + 1,
+                    ..job
+                };
+                super::delayed::schedule_retry(&state.redis, &retry_job).await?;
+            }
         }
-    }
 
-    Ok(())
+        Ok(())
+    }
+    .instrument(span)
+    .await
 }
