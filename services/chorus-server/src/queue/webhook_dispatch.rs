@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -45,54 +46,65 @@ pub async fn dispatch_webhooks(
     event: &str,
     payload: &WebhookPayload,
 ) {
-    let webhooks = match state
-        .webhook_repo()
-        .list_by_account_event(account_id, event)
-        .await
-    {
-        Ok(hooks) => hooks,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to load webhooks");
-            return;
-        }
-    };
+    let span = tracing::info_span!(
+        "dispatch_webhooks",
+        account_id = %account_id,
+        event = %event,
+        message_id = %payload.message_id,
+    );
 
-    let body = match serde_json::to_string(payload) {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to serialize webhook payload");
-            return;
-        }
-    };
+    async {
+        let webhooks = match state
+            .webhook_repo()
+            .list_by_account_event(account_id, event)
+            .await
+        {
+            Ok(hooks) => hooks,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to load webhooks");
+                return;
+            }
+        };
 
-    for webhook in webhooks {
-        let delivered = deliver_webhook(
-            state.http_client(),
-            &webhook.url,
-            &webhook.secret,
-            event,
-            &body,
-        )
-        .await;
+        let body = match serde_json::to_string(payload) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to serialize webhook payload");
+                return;
+            }
+        };
 
-        if !delivered {
-            let job = WebhookJob {
-                webhook_id: webhook.id,
-                url: webhook.url,
-                secret: webhook.secret,
-                event: event.to_string(),
-                body: body.clone(),
-                attempt: 1,
-            };
-            if let Err(e) = schedule_webhook_retry(&state.redis, &job).await {
-                tracing::error!(
-                    webhook_id = %job.webhook_id,
-                    error = %e,
-                    "failed to schedule webhook retry"
-                );
+        for webhook in webhooks {
+            let delivered = deliver_webhook(
+                state.http_client(),
+                &webhook.url,
+                &webhook.secret,
+                event,
+                &body,
+            )
+            .await;
+
+            if !delivered {
+                let job = WebhookJob {
+                    webhook_id: webhook.id,
+                    url: webhook.url,
+                    secret: webhook.secret,
+                    event: event.to_string(),
+                    body: body.clone(),
+                    attempt: 1,
+                };
+                if let Err(e) = schedule_webhook_retry(&state.redis, &job).await {
+                    tracing::error!(
+                        webhook_id = %job.webhook_id,
+                        error = %e,
+                        "failed to schedule webhook retry"
+                    );
+                }
             }
         }
     }
+    .instrument(span)
+    .await;
 }
 
 /// Attempt to deliver a webhook payload to a URL. Returns true on success.
@@ -103,36 +115,42 @@ async fn deliver_webhook(
     event: &str,
     body: &str,
 ) -> bool {
-    let signature = compute_signature(secret, body);
-    let timestamp = Utc::now().timestamp().to_string();
+    let span = tracing::info_span!("deliver_webhook", url = %url, event = %event);
 
-    let result = client
-        .post(url)
-        .header("Content-Type", "application/json")
-        .header("X-Chorus-Signature", &signature)
-        .header("X-Chorus-Event", event)
-        .header("X-Chorus-Timestamp", &timestamp)
-        .body(body.to_string())
-        .send()
-        .await;
+    async {
+        let signature = compute_signature(secret, body);
+        let timestamp = Utc::now().timestamp().to_string();
 
-    match result {
-        Ok(resp) if resp.status().is_success() => {
-            tracing::debug!(url, "webhook delivered");
-            metrics::counter!("chorus_webhook_deliveries_total", "event" => event.to_string(), "status" => "success").increment(1);
-            true
-        }
-        Ok(resp) => {
-            tracing::warn!(url, status = %resp.status(), "webhook delivery failed");
-            metrics::counter!("chorus_webhook_deliveries_total", "event" => event.to_string(), "status" => "failed").increment(1);
-            false
-        }
-        Err(e) => {
-            tracing::warn!(url, error = %e, "webhook HTTP error");
-            metrics::counter!("chorus_webhook_deliveries_total", "event" => event.to_string(), "status" => "error").increment(1);
-            false
+        let result = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .header("X-Chorus-Signature", &signature)
+            .header("X-Chorus-Event", event)
+            .header("X-Chorus-Timestamp", &timestamp)
+            .body(body.to_string())
+            .send()
+            .await;
+
+        match result {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::debug!("webhook delivered");
+                metrics::counter!("chorus_webhook_deliveries_total", "event" => event.to_string(), "status" => "success").increment(1);
+                true
+            }
+            Ok(resp) => {
+                tracing::warn!(status = %resp.status(), "webhook delivery failed");
+                metrics::counter!("chorus_webhook_deliveries_total", "event" => event.to_string(), "status" => "failed").increment(1);
+                false
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "webhook HTTP error");
+                metrics::counter!("chorus_webhook_deliveries_total", "event" => event.to_string(), "status" => "error").increment(1);
+                false
+            }
         }
     }
+    .instrument(span)
+    .await
 }
 
 /// Schedule a webhook job for retry with exponential backoff.
