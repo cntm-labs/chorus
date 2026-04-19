@@ -11,8 +11,8 @@ use crate::db::postgres::PgRepository;
 use crate::db::provider_config::PgProviderConfigRepository;
 use crate::db::webhook::PgWebhookRepository;
 use crate::db::{
-    AccountRepository, ApiKeyRepository, MessageRepository, ProviderConfigRepository,
-    WebhookRepository,
+    AccountRepository, AdminKeyRepository, AdminRepository, ApiKeyRepository, MessageRepository,
+    PgAdminRepository, ProviderConfigRepository, WebhookRepository,
 };
 use crate::routes;
 
@@ -38,6 +38,10 @@ pub struct AppState {
     webhook_repo: Arc<dyn WebhookRepository>,
     /// Billing repository.
     billing_repo: Arc<dyn BillingRepository>,
+    /// Admin key repository.
+    admin_key_repo: Arc<dyn AdminKeyRepository>,
+    /// Admin repository for cross-account queries.
+    admin_repo: Arc<dyn AdminRepository>,
 }
 
 impl AppState {
@@ -47,6 +51,7 @@ impl AppState {
         let provider_config_repo = Arc::new(PgProviderConfigRepository::new(db.clone()));
         let webhook_repo = Arc::new(PgWebhookRepository::new(db.clone()));
         let billing_repo = Arc::new(PgBillingRepository::new(db.clone()));
+        let admin_repo = Arc::new(PgAdminRepository::new(db.clone()));
         Self {
             db: Some(db),
             redis,
@@ -54,10 +59,12 @@ impl AppState {
             config,
             account_repo: repo.clone(),
             message_repo: repo.clone(),
-            api_key_repo: repo,
+            api_key_repo: repo.clone(),
+            admin_key_repo: repo,
             provider_config_repo,
             webhook_repo,
             billing_repo,
+            admin_repo,
         }
     }
 
@@ -82,6 +89,8 @@ impl AppState {
             provider_config_repo,
             webhook_repo,
             billing_repo: Arc::new(crate::db::billing::NullBillingRepository),
+            admin_key_repo: Arc::new(NullAdminKeyRepository),
+            admin_repo: Arc::new(NullAdminRepository),
         }
     }
 
@@ -113,6 +122,16 @@ impl AppState {
     /// Access the billing repository.
     pub fn billing_repo(&self) -> Arc<dyn BillingRepository> {
         Arc::clone(&self.billing_repo)
+    }
+
+    /// Access the admin key repository.
+    pub fn admin_key_repo(&self) -> Arc<dyn AdminKeyRepository> {
+        Arc::clone(&self.admin_key_repo)
+    }
+
+    /// Access the admin repository.
+    pub fn admin_repo(&self) -> Arc<dyn AdminRepository> {
+        Arc::clone(&self.admin_repo)
     }
 
     /// Access the shared HTTP client.
@@ -180,6 +199,7 @@ pub fn create_router_with_metrics(
         .route("/v1/billing/usage", get(routes::billing::get_usage))
         .route("/internal/bounces", post(routes::internal::handle_bounce))
         .route("/internal/dns-check", get(routes::internal::dns_check))
+        .nest("/admin", routes::admin::router())
         .with_state(state)
         .layer(axum_middleware::from_fn(crate::middleware::metrics::track));
 
@@ -192,4 +212,150 @@ pub fn create_router_with_metrics(
     }
 
     router
+}
+
+/// No-op admin key repository for tests.
+struct NullAdminKeyRepository;
+
+/// No-op admin repository for tests.
+struct NullAdminRepository;
+
+#[async_trait::async_trait]
+impl AdminKeyRepository for NullAdminKeyRepository {
+    async fn find_by_hash(
+        &self,
+        _hash: &str,
+    ) -> Result<Option<crate::db::AdminKey>, crate::db::DbError> {
+        Ok(None)
+    }
+}
+
+#[async_trait::async_trait]
+impl AdminRepository for NullAdminRepository {
+    async fn list_accounts(
+        &self,
+    ) -> Result<Vec<crate::routes::admin::accounts::AccountListItem>, crate::db::DbError> {
+        Ok(vec![])
+    }
+    async fn get_account_detail(
+        &self,
+        _id: uuid::Uuid,
+    ) -> Result<Option<crate::routes::admin::accounts::AccountDetail>, crate::db::DbError> {
+        Ok(None)
+    }
+    async fn create_account(
+        &self,
+        _name: &str,
+        _email: &str,
+    ) -> Result<crate::routes::admin::accounts::AccountListItem, crate::db::DbError> {
+        Err(crate::db::DbError::Internal(anyhow::anyhow!(
+            "not implemented"
+        )))
+    }
+    async fn update_account(
+        &self,
+        _id: uuid::Uuid,
+        _is_active: Option<bool>,
+        _name: Option<&str>,
+    ) -> Result<(), crate::db::DbError> {
+        Ok(())
+    }
+    async fn deactivate_account(&self, _id: uuid::Uuid) -> Result<(), crate::db::DbError> {
+        Ok(())
+    }
+    async fn list_all_provider_configs(
+        &self,
+    ) -> Result<Vec<crate::routes::admin::providers::AdminProviderConfig>, crate::db::DbError> {
+        Ok(vec![])
+    }
+    async fn get_provider_health(
+        &self,
+        _id: uuid::Uuid,
+    ) -> Result<Option<crate::routes::admin::providers::ProviderHealth>, crate::db::DbError> {
+        Ok(None)
+    }
+    async fn update_provider_config(
+        &self,
+        _id: uuid::Uuid,
+        _priority: Option<i32>,
+        _is_active: Option<bool>,
+    ) -> Result<(), crate::db::DbError> {
+        Ok(())
+    }
+    async fn disable_provider_by_name(&self, _provider: &str) -> Result<u64, crate::db::DbError> {
+        Ok(0)
+    }
+    async fn get_message_by_id(
+        &self,
+        _id: uuid::Uuid,
+    ) -> Result<Option<crate::db::Message>, crate::db::DbError> {
+        Ok(None)
+    }
+    async fn search_messages(
+        &self,
+        _filters: &crate::routes::admin::messages::MessageSearchFilters,
+    ) -> Result<Vec<crate::db::Message>, crate::db::DbError> {
+        Ok(vec![])
+    }
+    async fn list_billing_accounts(
+        &self,
+    ) -> Result<Vec<crate::routes::admin::billing::BillingAccountSummary>, crate::db::DbError> {
+        Ok(vec![])
+    }
+    async fn override_plan(
+        &self,
+        _account_id: uuid::Uuid,
+        _plan_slug: &str,
+    ) -> Result<(), crate::db::DbError> {
+        Ok(())
+    }
+    async fn adjust_usage(
+        &self,
+        _account_id: uuid::Uuid,
+        _sms_delta: Option<i32>,
+        _email_delta: Option<i32>,
+    ) -> Result<(), crate::db::DbError> {
+        Ok(())
+    }
+    async fn billing_report(
+        &self,
+    ) -> Result<crate::routes::admin::billing::BillingReport, crate::db::DbError> {
+        Ok(crate::routes::admin::billing::BillingReport {
+            total_revenue_cents: 0,
+            accounts_by_plan: vec![],
+            overage_accounts: vec![],
+        })
+    }
+    async fn list_all_webhooks(
+        &self,
+    ) -> Result<Vec<crate::routes::admin::webhooks::AdminWebhook>, crate::db::DbError> {
+        Ok(vec![])
+    }
+    async fn get_webhook_by_id(
+        &self,
+        _id: uuid::Uuid,
+    ) -> Result<Option<crate::db::Webhook>, crate::db::DbError> {
+        Ok(None)
+    }
+    async fn get_webhook_deliveries(
+        &self,
+        _webhook_id: uuid::Uuid,
+        _limit: i64,
+        _offset: i64,
+    ) -> Result<Vec<crate::routes::admin::webhooks::WebhookDelivery>, crate::db::DbError> {
+        Ok(vec![])
+    }
+    async fn update_webhook_status(
+        &self,
+        _id: uuid::Uuid,
+        _is_active: bool,
+    ) -> Result<(), crate::db::DbError> {
+        Ok(())
+    }
+    async fn disable_account_webhooks(
+        &self,
+        _account_id: uuid::Uuid,
+    ) -> Result<u64, crate::db::DbError> {
+        Ok(0)
+    }
 }

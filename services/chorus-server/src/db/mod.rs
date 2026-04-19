@@ -1,7 +1,10 @@
+pub mod admin;
 pub mod billing;
 pub mod postgres;
 pub mod provider_config;
 pub mod webhook;
+
+pub use admin::{AdminRepository, PgAdminRepository};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -222,6 +225,23 @@ pub trait WebhookRepository: Send + Sync {
 
     /// Delete a webhook (soft-delete by setting `is_active = false`).
     async fn delete(&self, id: Uuid, account_id: Uuid) -> Result<(), DbError>;
+}
+
+/// An admin API key for dashboard access.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminKey {
+    pub id: Uuid,
+    pub name: String,
+    pub key_prefix: String,
+    pub is_revoked: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Repository for admin key operations.
+#[async_trait]
+pub trait AdminKeyRepository: Send + Sync {
+    /// Find an admin key by its SHA-256 hash.
+    async fn find_by_hash(&self, hash: &str) -> Result<Option<AdminKey>, DbError>;
 }
 
 /// API key management operations.

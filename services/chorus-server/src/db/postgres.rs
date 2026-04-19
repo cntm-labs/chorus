@@ -15,8 +15,8 @@ macro_rules! record_db_duration {
 }
 
 use super::{
-    Account, AccountRepository, ApiKey, ApiKeyRepository, DbError, DeliveryEvent, Message,
-    MessageRepository, NewMessage, Pagination,
+    Account, AccountRepository, AdminKey, AdminKeyRepository, ApiKey, ApiKeyRepository, DbError,
+    DeliveryEvent, Message, MessageRepository, NewMessage, Pagination,
 };
 
 /// PostgreSQL-backed repository implementation using sqlx.
@@ -252,5 +252,21 @@ impl ApiKeyRepository for PgRepository {
         }
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl AdminKeyRepository for PgRepository {
+    async fn find_by_hash(&self, hash: &str) -> Result<Option<AdminKey>, DbError> {
+        let key = sqlx::query_as::<_, AdminKey>(
+            "SELECT id, name, key_prefix, is_revoked, created_at
+             FROM admin_keys WHERE key_hash = $1",
+        )
+        .bind(hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError::Internal(e.into()))?;
+
+        Ok(key)
     }
 }
