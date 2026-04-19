@@ -21,15 +21,18 @@ pub fn spawn_workers(state: Arc<AppState>, config: Arc<Config>, concurrency: usi
     for i in 0..concurrency {
         let state = Arc::clone(&state);
         let config = Arc::clone(&config);
-        tokio::spawn(async move {
-            tracing::info!(worker = i, "queue worker started");
-            loop {
-                if let Err(e) = process_next_job(&state, &config).await {
-                    tracing::error!(worker = i, "worker error: {e}");
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::spawn(
+            async move {
+                tracing::info!("queue worker started");
+                loop {
+                    if let Err(e) = process_next_job(&state, &config).await {
+                        tracing::error!(error = %e, "worker error");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
                 }
             }
-        });
+            .instrument(tracing::info_span!("worker", worker_id = i)),
+        );
     }
 }
 
