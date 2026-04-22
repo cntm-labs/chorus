@@ -201,7 +201,10 @@ pub fn create_router_with_metrics(
         .route("/internal/dns-check", get(routes::internal::dns_check))
         .nest("/admin", routes::admin::router())
         .with_state(state)
-        .layer(axum_middleware::from_fn(crate::middleware::metrics::track));
+        .layer(axum_middleware::from_fn(crate::middleware::metrics::track))
+        .layer(axum_middleware::from_fn(
+            crate::middleware::request_id::inject,
+        ));
 
     if let Some(handle) = metrics_handle {
         router = router.merge(

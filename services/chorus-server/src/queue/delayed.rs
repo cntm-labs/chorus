@@ -1,4 +1,5 @@
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use tracing::Instrument;
 
 /// Spawn the delayed queue poller that moves due jobs back to the main queue.
 pub fn spawn_delayed_poller(redis: redis::Client) {
@@ -29,21 +30,39 @@ async fn poll_delayed_jobs(redis: &redis::Client) -> anyhow::Result<()> {
     super::record_redis_duration!("zrangebyscore", start);
 
     for payload in jobs {
-        // Atomically remove from delayed set — if ZREM returns 0, another poller got it
-        let removed: i64 = redis::cmd("ZREM")
-            .arg(super::DELAYED_KEY)
-            .arg(&payload)
-            .query_async(&mut conn)
-            .await?;
+        let job: super::SendJob = match serde_json::from_str(&payload) {
+            Ok(j) => j,
+            Err(_) => continue,
+        };
 
-        if removed > 0 {
-            redis::cmd("LPUSH")
-                .arg(super::QUEUE_KEY)
+        let span = tracing::info_span!(
+            "requeue_delayed",
+            message_id = %job.message_id,
+            account_id = %job.account_id,
+            attempt = job.attempt,
+        );
+
+        async {
+            // Atomically remove from delayed set — if ZREM returns 0, another poller got it
+            let removed: i64 = redis::cmd("ZREM")
+                .arg(super::DELAYED_KEY)
                 .arg(&payload)
-                .query_async::<i64>(&mut conn)
+                .query_async(&mut conn)
                 .await?;
-            tracing::debug!("moved delayed job back to main queue");
+
+            if removed > 0 {
+                redis::cmd("LPUSH")
+                    .arg(super::QUEUE_KEY)
+                    .arg(&payload)
+                    .query_async::<i64>(&mut conn)
+                    .await?;
+                tracing::debug!("moved delayed job back to main queue");
+            }
+
+            Ok::<_, anyhow::Error>(())
         }
+        .instrument(span)
+        .await?;
     }
 
     Ok(())
