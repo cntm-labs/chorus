@@ -1080,3 +1080,46 @@ async fn delete_suppression_round_trip() {
         .unwrap();
     assert_eq!(del2.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn sms_send_to_suppressed_recipient_returns_422() {
+    let state = test_state();
+    let app = create_router(Arc::clone(&state));
+
+    // Pre-populate suppression
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"sms","recipient":"+14155552671"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"to":"+14155552671","body":"hi"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = response_body(resp).await;
+    assert_eq!(body["error"]["code"], "recipient_suppressed");
+    assert_eq!(body["error"]["reason"], "manual");
+}
