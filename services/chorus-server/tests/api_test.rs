@@ -53,6 +53,11 @@ impl MockMessageRepo {
             messages: Mutex::new(Vec::new()),
         }
     }
+
+    /// Directly insert a pre-built message without going through the HTTP layer — test helper.
+    fn seed(&self, msg: Message) {
+        self.messages.lock().unwrap().push(msg);
+    }
 }
 
 #[async_trait]
@@ -127,6 +132,17 @@ impl MessageRepository for MockMessageRepo {
 
     async fn get_delivery_events(&self, _message_id: Uuid) -> Result<Vec<DeliveryEvent>, DbError> {
         Ok(vec![])
+    }
+
+    async fn find_by_provider_message_id(
+        &self,
+        provider_message_id: &str,
+    ) -> Result<Option<Message>, DbError> {
+        let msgs = self.messages.lock().unwrap();
+        Ok(msgs
+            .iter()
+            .find(|m| m.provider_message_id.as_deref() == Some(provider_message_id))
+            .cloned())
     }
 }
 
@@ -206,6 +222,10 @@ impl MockSuppressionRepo {
         Self {
             entries: Mutex::new(Vec::new()),
         }
+    }
+
+    fn snapshot(&self) -> Vec<Suppression> {
+        self.entries.lock().unwrap().clone()
     }
 }
 
@@ -318,7 +338,14 @@ impl ProviderConfigRepository for MockProviderConfigRepo {
 const TEST_API_KEY: &str =
     "ch_test_abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
 
-fn test_state() -> Arc<AppState> {
+struct TestFixture {
+    state: Arc<AppState>,
+    suppressions: Arc<MockSuppressionRepo>,
+    messages: Arc<MockMessageRepo>,
+    account_id: Uuid,
+}
+
+fn test_fixture() -> TestFixture {
     let key_hash = hex::encode(Sha256::digest(TEST_API_KEY.as_bytes()));
     let account_id = Uuid::new_v4();
     let key_id = Uuid::new_v4();
@@ -346,27 +373,31 @@ fn test_state() -> Arc<AppState> {
         key_hash,
     });
 
-    let message_repo = Arc::new(MockMessageRepo::new());
+    let messages = Arc::new(MockMessageRepo::new());
+    let suppressions = Arc::new(MockSuppressionRepo::new());
     let api_key_repo = Arc::new(MockApiKeyRepo);
     let provider_config_repo = Arc::new(MockProviderConfigRepo);
     let webhook_repo = Arc::new(MockWebhookRepo);
-    let suppression_repo = Arc::new(MockSuppressionRepo::new());
 
-    // Use a dummy Redis URL — tests that hit Redis will fail,
-    // but auth + DB-only tests will work
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
-
     let config = Arc::new(Config::from_env());
-    Arc::new(AppState::with_repos(
+
+    let state = Arc::new(AppState::with_repos(
         redis,
         config,
         account_repo,
-        message_repo,
+        messages.clone(),
         api_key_repo,
         provider_config_repo,
         webhook_repo,
-        suppression_repo,
-    ))
+        suppressions.clone(),
+    ));
+
+    TestFixture { state, suppressions, messages, account_id }
+}
+
+fn test_state() -> Arc<AppState> {
+    test_fixture().state
 }
 
 async fn response_body(resp: axum::response::Response) -> Value {
@@ -1249,4 +1280,84 @@ async fn email_batch_with_suppressed_recipient_returns_207() {
     assert_eq!(suppressed.len(), 1);
     assert_eq!(suppressed[0]["to"], "bad@example.com");
     assert_eq!(suppressed[0]["reason"], "manual");
+}
+
+#[tokio::test]
+async fn bounce_creates_suppression_and_marks_message_bounced() {
+    std::env::set_var("BOUNCE_SECRET", "test-secret");
+
+    let fx = test_fixture();
+    let app = create_router(Arc::clone(&fx.state));
+
+    // Seed a message row directly (bypassing HTTP/Redis so the test stays self-contained).
+    fx.messages.seed(Message {
+        id: Uuid::new_v4(),
+        account_id: fx.account_id,
+        api_key_id: Uuid::new_v4(),
+        channel: "email".into(),
+        provider: None,
+        sender: None,
+        recipient: "bouncy@example.com".into(),
+        subject: Some("x".into()),
+        body: "y".into(),
+        status: "queued".into(),
+        provider_message_id: Some("bounce-test-1".into()),
+        error_message: None,
+        cost_microdollars: 0,
+        attempts: 0,
+        environment: "test".into(),
+        created_at: Utc::now(),
+        delivered_at: None,
+    });
+
+    // POST the bounce.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/internal/bounces")
+                .header("x-chorus-secret", "test-secret")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"recipient":"bouncy@example.com","reason":"5.1.1 user unknown","message_id":"bounce-test-1"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Verify suppression created.
+    let snapshot = fx.suppressions.snapshot();
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(snapshot[0].channel, "email");
+    assert_eq!(snapshot[0].recipient, "bouncy@example.com");
+    assert_eq!(snapshot[0].reason, "hard_bounce");
+    assert_eq!(snapshot[0].source, "chorus-mail");
+    assert_eq!(snapshot[0].account_id, fx.account_id);
+}
+
+#[tokio::test]
+async fn bounce_with_unknown_message_id_returns_200_no_suppression() {
+    std::env::set_var("BOUNCE_SECRET", "test-secret");
+
+    let fx = test_fixture();
+    let app = create_router(Arc::clone(&fx.state));
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/internal/bounces")
+                .header("x-chorus-secret", "test-secret")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"recipient":"x@example.com","reason":"5.1.1","message_id":"never-existed"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(fx.suppressions.snapshot().is_empty());
 }

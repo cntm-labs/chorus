@@ -144,6 +144,12 @@ pub trait MessageRepository: Send + Sync {
 
     /// Get all delivery events for a message.
     async fn get_delivery_events(&self, message_id: Uuid) -> Result<Vec<DeliveryEvent>, DbError>;
+
+    /// Find a message by its provider's message id (no account scoping — internal use only).
+    async fn find_by_provider_message_id(
+        &self,
+        provider_message_id: &str,
+    ) -> Result<Option<Message>, DbError>;
 }
 
 /// A provider configuration for per-account routing.

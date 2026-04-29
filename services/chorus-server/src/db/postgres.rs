@@ -193,6 +193,22 @@ impl MessageRepository for PgRepository {
 
         Ok(events)
     }
+
+    async fn find_by_provider_message_id(
+        &self,
+        provider_message_id: &str,
+    ) -> Result<Option<Message>, DbError> {
+        let start = Instant::now();
+        let msg = sqlx::query_as::<_, Message>(
+            "SELECT * FROM messages WHERE provider_message_id = $1 LIMIT 1",
+        )
+        .bind(provider_message_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| DbError::Internal(e.into()))?;
+        record_db_duration!("find_by_provider_message_id", start);
+        Ok(msg)
+    }
 }
 
 #[async_trait]
