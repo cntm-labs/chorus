@@ -90,13 +90,8 @@ pub async fn send_sms_batch(
     let mut any_suppressed = false;
 
     for recipient in &req.recipients {
-        match crate::suppression::check_suppression(
-            &state,
-            ctx.account_id,
-            "sms",
-            &recipient.to,
-        )
-        .await
+        match crate::suppression::check_suppression(&state, ctx.account_id, "sms", &recipient.to)
+            .await
         {
             Err(crate::suppression::SuppressionRejection::Suppressed { reason }) => {
                 any_suppressed = true;
@@ -202,13 +197,8 @@ pub async fn send_email_batch(
     let mut any_suppressed = false;
 
     for recipient in &req.recipients {
-        match crate::suppression::check_suppression(
-            &state,
-            ctx.account_id,
-            "email",
-            &recipient.to,
-        )
-        .await
+        match crate::suppression::check_suppression(&state, ctx.account_id, "email", &recipient.to)
+            .await
         {
             Err(crate::suppression::SuppressionRejection::Suppressed { reason }) => {
                 any_suppressed = true;

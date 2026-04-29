@@ -51,8 +51,8 @@ pub async fn check_suppression(
     channel: &str,
     recipient: &str,
 ) -> Result<(), SuppressionRejection> {
-    let normalized = normalize(channel, recipient)
-        .map_err(|_| SuppressionRejection::InvalidRecipient)?;
+    let normalized =
+        normalize(channel, recipient).map_err(|_| SuppressionRejection::InvalidRecipient)?;
     match state
         .suppression_repo()
         .is_suppressed(account_id, channel, &normalized)

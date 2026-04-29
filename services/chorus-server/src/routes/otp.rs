@@ -56,10 +56,12 @@ pub async fn send_otp(
 
     let otp_id = crate::otp::store(&state.redis, &req.to, &code)
         .await
-        .map_err(|e| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
-        ))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
+            )
+        })?;
 
     let app_name = req.app_name.as_deref().unwrap_or("Chorus");
     let body = format!("Your {app_name} verification code is: {code}");
@@ -76,14 +78,12 @@ pub async fn send_otp(
         environment: _ctx.environment.clone(),
     };
 
-    let message = state
-        .message_repo()
-        .insert(&new_msg)
-        .await
-        .map_err(|e| (
+    let message = state.message_repo().insert(&new_msg).await.map_err(|e| {
+        (
             StatusCode::INTERNAL_SERVER_ERROR,
             axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
-        ))?;
+        )
+    })?;
 
     let job = crate::queue::SendJob {
         message_id: message.id,
@@ -94,10 +94,12 @@ pub async fn send_otp(
     };
     crate::queue::enqueue::notify(&state, &job)
         .await
-        .map_err(|e| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
-        ))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
+            )
+        })?;
 
     Ok((StatusCode::CREATED, Json(SendOtpResponse { otp_id })))
 }

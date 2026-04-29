@@ -46,16 +46,12 @@ pub async fn send_email(
         environment: ctx.environment,
     };
 
-    let message = state
-        .message_repo()
-        .insert(&new_msg)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
-            )
-        })?;
+    let message = state.message_repo().insert(&new_msg).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
+        )
+    })?;
 
     let job = SendJob {
         message_id: message.id,

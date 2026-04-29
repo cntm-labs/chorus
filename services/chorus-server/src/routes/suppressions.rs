@@ -120,8 +120,8 @@ pub async fn delete_suppression(
     ctx: AccountContext,
     Path((channel, recipient)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let normalized = normalize(&channel, &recipient)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let normalized =
+        normalize(&channel, &recipient).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     let removed = state
         .suppression_repo()

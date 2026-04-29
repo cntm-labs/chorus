@@ -240,7 +240,9 @@ impl SuppressionRepository for MockSuppressionRepo {
         let entries = self.entries.lock().unwrap();
         Ok(entries
             .iter()
-            .find(|e| e.account_id == account_id && e.channel == channel && e.recipient == recipient)
+            .find(|e| {
+                e.account_id == account_id && e.channel == channel && e.recipient == recipient
+            })
             .map(|e| e.reason.clone()))
     }
 
@@ -288,7 +290,7 @@ impl SuppressionRepository for MockSuppressionRepo {
         let filtered: Vec<_> = entries
             .iter()
             .filter(|e| e.account_id == account_id)
-            .filter(|e| channel.map_or(true, |c| e.channel == c))
+            .filter(|e| channel.is_none_or(|c| e.channel == c))
             .skip(pagination.offset as usize)
             .take(pagination.limit as usize)
             .cloned()
@@ -393,7 +395,12 @@ fn test_fixture() -> TestFixture {
         suppressions.clone(),
     ));
 
-    TestFixture { state, suppressions, messages, account_id }
+    TestFixture {
+        state,
+        suppressions,
+        messages,
+        account_id,
+    }
 }
 
 fn test_state() -> Arc<AppState> {
@@ -1222,9 +1229,7 @@ async fn otp_send_to_suppressed_email_returns_422() {
                 .uri("/v1/otp/send")
                 .header("authorization", format!("Bearer {TEST_API_KEY}"))
                 .header("content-type", "application/json")
-                .body(axum::body::Body::from(
-                    r#"{"to":"otp@example.com"}"#,
-                ))
+                .body(axum::body::Body::from(r#"{"to":"otp@example.com"}"#))
                 .unwrap(),
         )
         .await
@@ -1276,7 +1281,10 @@ async fn email_batch_with_suppressed_recipient_returns_207() {
     let body = response_body(resp).await;
     let messages = body["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 2);
-    let suppressed: Vec<_> = messages.iter().filter(|m| m["status"] == "suppressed").collect();
+    let suppressed: Vec<_> = messages
+        .iter()
+        .filter(|m| m["status"] == "suppressed")
+        .collect();
     assert_eq!(suppressed.len(), 1);
     assert_eq!(suppressed[0]["to"], "bad@example.com");
     assert_eq!(suppressed[0]["reason"], "manual");
