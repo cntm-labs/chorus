@@ -1201,3 +1201,52 @@ async fn otp_send_to_suppressed_email_returns_422() {
 
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[tokio::test]
+async fn email_batch_with_suppressed_recipient_returns_207() {
+    let app = create_router(test_state());
+
+    // Suppress one recipient
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"bad@example.com"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/email/send-batch")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"recipients":[
+                        {"to":"good@example.com","subject":"x","body":"y"},
+                        {"to":"bad@example.com","subject":"x","body":"y"}
+                    ]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::MULTI_STATUS);
+    let body = response_body(resp).await;
+    let messages = body["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2);
+    let suppressed: Vec<_> = messages.iter().filter(|m| m["status"] == "suppressed").collect();
+    assert_eq!(suppressed.len(), 1);
+    assert_eq!(suppressed[0]["to"], "bad@example.com");
+    assert_eq!(suppressed[0]["reason"], "manual");
+}
