@@ -952,3 +952,131 @@ async fn billing_checkout_without_stripe_returns_503() {
     // No STRIPE_SECRET_KEY configured → 503
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
+
+// ---------------------------------------------------------------------------
+// Suppression list tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_suppressions_empty_returns_200() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = response_body(resp).await;
+    assert_eq!(body["data"], serde_json::json!([]));
+    assert_eq!(body["limit"], 20);
+    assert_eq!(body["offset"], 0);
+}
+
+#[tokio::test]
+async fn create_suppression_normalizes_email_and_returns_201() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"  Alice@Example.COM "}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = response_body(resp).await;
+    assert_eq!(body["recipient"], "alice@example.com");
+    assert_eq!(body["reason"], "manual");
+    assert_eq!(body["source"], "api");
+}
+
+#[tokio::test]
+async fn create_suppression_rejects_bad_e164() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"sms","recipient":"0812345678"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn delete_suppression_round_trip() {
+    let state = test_state();
+    let app = create_router(Arc::clone(&state));
+
+    // Add
+    let add = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"bob@example.com"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(add.status(), StatusCode::CREATED);
+
+    // Delete
+    let del = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/suppressions/email/bob@example.com")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(del.status(), StatusCode::NO_CONTENT);
+
+    // Delete again → 404
+    let del2 = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/suppressions/email/bob@example.com")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(del2.status(), StatusCode::NOT_FOUND);
+}
