@@ -197,6 +197,15 @@ pub fn create_router_with_metrics(
             "/v1/webhooks/{id}",
             delete(routes::webhooks::delete_webhook),
         )
+        .route(
+            "/v1/suppressions",
+            get(routes::suppressions::list_suppressions)
+                .post(routes::suppressions::create_suppression),
+        )
+        .route(
+            "/v1/suppressions/{channel}/{recipient}",
+            delete(routes::suppressions::delete_suppression),
+        )
         .route("/v1/sms/send-batch", post(routes::batch::send_sms_batch))
         .route(
             "/v1/email/send-batch",
