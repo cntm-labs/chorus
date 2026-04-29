@@ -63,6 +63,34 @@ pub async fn check_suppression(
     }
 }
 
+/// Convert a [`SuppressionRejection`] into an HTTP error response body.
+pub fn rejection_response(
+    err: SuppressionRejection,
+) -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+    match err {
+        SuppressionRejection::Suppressed { reason } => (
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            axum::Json(serde_json::json!({
+                "error": {
+                    "code": "recipient_suppressed",
+                    "message": "Recipient is on the suppression list",
+                    "reason": reason,
+                }
+            })),
+        ),
+        SuppressionRejection::InvalidRecipient => (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "error": { "code": "invalid_recipient" }
+            })),
+        ),
+        SuppressionRejection::Db(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

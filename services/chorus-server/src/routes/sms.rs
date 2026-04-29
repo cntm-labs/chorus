@@ -35,7 +35,7 @@ pub async fn send_sms(
     Json(req): Json<SendSmsRequest>,
 ) -> Result<(StatusCode, Json<SendResponse>), (StatusCode, axum::Json<serde_json::Value>)> {
     if let Err(e) = crate::suppression::check_suppression(&state, ctx.account_id, "sms", &req.to).await {
-        return Err(suppression_error_response(e));
+        return Err(crate::suppression::rejection_response(e));
     }
 
     let new_msg = NewMessage {
@@ -53,7 +53,12 @@ pub async fn send_sms(
         .message_repo()
         .insert(&new_msg)
         .await
-        .map_err(|e| internal_error(e.to_string()))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
+            )
+        })?;
 
     let job = SendJob {
         message_id: message.id,
@@ -64,7 +69,12 @@ pub async fn send_sms(
     };
     crate::queue::enqueue::notify(&state, &job)
         .await
-        .map_err(|e| internal_error(e.to_string()))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
+            )
+        })?;
 
     Ok((
         StatusCode::ACCEPTED,
@@ -75,34 +85,3 @@ pub async fn send_sms(
     ))
 }
 
-fn suppression_error_response(
-    err: crate::suppression::SuppressionRejection,
-) -> (StatusCode, axum::Json<serde_json::Value>) {
-    use crate::suppression::SuppressionRejection;
-    match err {
-        SuppressionRejection::Suppressed { reason } => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            axum::Json(serde_json::json!({
-                "error": {
-                    "code": "recipient_suppressed",
-                    "message": "Recipient is on the suppression list",
-                    "reason": reason,
-                }
-            })),
-        ),
-        SuppressionRejection::InvalidRecipient => (
-            StatusCode::BAD_REQUEST,
-            axum::Json(serde_json::json!({
-                "error": { "code": "invalid_recipient" }
-            })),
-        ),
-        SuppressionRejection::Db(e) => internal_error(e.to_string()),
-    }
-}
-
-fn internal_error(msg: String) -> (StatusCode, axum::Json<serde_json::Value>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        axum::Json(serde_json::json!({ "error": { "message": msg } })),
-    )
-}
