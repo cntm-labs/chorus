@@ -9,10 +9,11 @@ use crate::config::Config;
 use crate::db::billing::{BillingRepository, PgBillingRepository};
 use crate::db::postgres::PgRepository;
 use crate::db::provider_config::PgProviderConfigRepository;
+use crate::db::suppression::PgSuppressionRepository;
 use crate::db::webhook::PgWebhookRepository;
 use crate::db::{
     AccountRepository, AdminKeyRepository, AdminRepository, ApiKeyRepository, MessageRepository,
-    PgAdminRepository, ProviderConfigRepository, WebhookRepository,
+    PgAdminRepository, ProviderConfigRepository, SuppressionRepository, WebhookRepository,
 };
 use crate::routes;
 
@@ -36,6 +37,8 @@ pub struct AppState {
     provider_config_repo: Arc<dyn ProviderConfigRepository>,
     /// Webhook repository.
     webhook_repo: Arc<dyn WebhookRepository>,
+    /// Suppression list repository.
+    suppression_repo: Arc<dyn SuppressionRepository>,
     /// Billing repository.
     billing_repo: Arc<dyn BillingRepository>,
     /// Admin key repository.
@@ -50,6 +53,7 @@ impl AppState {
         let repo = Arc::new(PgRepository::new(db.clone()));
         let provider_config_repo = Arc::new(PgProviderConfigRepository::new(db.clone()));
         let webhook_repo = Arc::new(PgWebhookRepository::new(db.clone()));
+        let suppression_repo = Arc::new(PgSuppressionRepository::new(db.clone()));
         let billing_repo = Arc::new(PgBillingRepository::new(db.clone()));
         let admin_repo = Arc::new(PgAdminRepository::new(db.clone()));
         Self {
@@ -63,6 +67,7 @@ impl AppState {
             admin_key_repo: repo,
             provider_config_repo,
             webhook_repo,
+            suppression_repo,
             billing_repo,
             admin_repo,
         }
@@ -77,6 +82,7 @@ impl AppState {
         api_key_repo: Arc<dyn ApiKeyRepository>,
         provider_config_repo: Arc<dyn ProviderConfigRepository>,
         webhook_repo: Arc<dyn WebhookRepository>,
+        suppression_repo: Arc<dyn SuppressionRepository>,
     ) -> Self {
         Self {
             db: None,
@@ -88,6 +94,7 @@ impl AppState {
             api_key_repo,
             provider_config_repo,
             webhook_repo,
+            suppression_repo,
             billing_repo: Arc::new(crate::db::billing::NullBillingRepository),
             admin_key_repo: Arc::new(NullAdminKeyRepository),
             admin_repo: Arc::new(NullAdminRepository),
@@ -117,6 +124,11 @@ impl AppState {
     /// Access the webhook repository.
     pub fn webhook_repo(&self) -> Arc<dyn WebhookRepository> {
         Arc::clone(&self.webhook_repo)
+    }
+
+    /// Access the suppression repository.
+    pub fn suppression_repo(&self) -> Arc<dyn SuppressionRepository> {
+        Arc::clone(&self.suppression_repo)
     }
 
     /// Access the billing repository.

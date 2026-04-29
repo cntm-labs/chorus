@@ -13,8 +13,9 @@ use chorus_server::app::{create_router, AppState};
 use chorus_server::config::Config;
 use chorus_server::db::{
     Account, AccountRepository, ApiKey, ApiKeyRepository, DbError, DeliveryEvent, Message,
-    MessageRepository, NewMessage, NewProviderConfig, NewWebhook, Pagination, ProviderConfig,
-    ProviderConfigRepository, Webhook, WebhookRepository,
+    MessageRepository, NewMessage, NewProviderConfig, NewSuppression, NewWebhook, Pagination,
+    ProviderConfig, ProviderConfigRepository, Suppression, SuppressionRepository, Webhook,
+    WebhookRepository,
 };
 
 // ---------------------------------------------------------------------------
@@ -196,6 +197,86 @@ impl WebhookRepository for MockWebhookRepo {
     }
 }
 
+struct MockSuppressionRepo {
+    entries: Mutex<Vec<Suppression>>,
+}
+
+impl MockSuppressionRepo {
+    fn new() -> Self {
+        Self {
+            entries: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl SuppressionRepository for MockSuppressionRepo {
+    async fn is_suppressed(
+        &self,
+        account_id: Uuid,
+        channel: &str,
+        recipient: &str,
+    ) -> Result<Option<String>, DbError> {
+        let entries = self.entries.lock().unwrap();
+        Ok(entries
+            .iter()
+            .find(|e| e.account_id == account_id && e.channel == channel && e.recipient == recipient)
+            .map(|e| e.reason.clone()))
+    }
+
+    async fn add(&self, entry: &NewSuppression) -> Result<(), DbError> {
+        let mut entries = self.entries.lock().unwrap();
+        let exists = entries.iter().any(|e| {
+            e.account_id == entry.account_id
+                && e.channel == entry.channel
+                && e.recipient == entry.recipient
+        });
+        if !exists {
+            entries.push(Suppression {
+                account_id: entry.account_id,
+                channel: entry.channel.clone(),
+                recipient: entry.recipient.clone(),
+                reason: entry.reason.clone(),
+                source: entry.source.clone(),
+                created_at: Utc::now(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn remove(
+        &self,
+        account_id: Uuid,
+        channel: &str,
+        recipient: &str,
+    ) -> Result<bool, DbError> {
+        let mut entries = self.entries.lock().unwrap();
+        let before = entries.len();
+        entries.retain(|e| {
+            !(e.account_id == account_id && e.channel == channel && e.recipient == recipient)
+        });
+        Ok(entries.len() < before)
+    }
+
+    async fn list(
+        &self,
+        account_id: Uuid,
+        channel: Option<&str>,
+        pagination: &Pagination,
+    ) -> Result<Vec<Suppression>, DbError> {
+        let entries = self.entries.lock().unwrap();
+        let filtered: Vec<_> = entries
+            .iter()
+            .filter(|e| e.account_id == account_id)
+            .filter(|e| channel.map_or(true, |c| e.channel == c))
+            .skip(pagination.offset as usize)
+            .take(pagination.limit as usize)
+            .cloned()
+            .collect();
+        Ok(filtered)
+    }
+}
+
 struct MockProviderConfigRepo;
 
 #[async_trait]
@@ -269,6 +350,7 @@ fn test_state() -> Arc<AppState> {
     let api_key_repo = Arc::new(MockApiKeyRepo);
     let provider_config_repo = Arc::new(MockProviderConfigRepo);
     let webhook_repo = Arc::new(MockWebhookRepo);
+    let suppression_repo = Arc::new(MockSuppressionRepo::new());
 
     // Use a dummy Redis URL — tests that hit Redis will fail,
     // but auth + DB-only tests will work
@@ -283,6 +365,7 @@ fn test_state() -> Arc<AppState> {
         api_key_repo,
         provider_config_repo,
         webhook_repo,
+        suppression_repo,
     ))
 }
 
