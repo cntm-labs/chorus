@@ -13,8 +13,9 @@ use chorus_server::app::{create_router, AppState};
 use chorus_server::config::Config;
 use chorus_server::db::{
     Account, AccountRepository, ApiKey, ApiKeyRepository, DbError, DeliveryEvent, Message,
-    MessageRepository, NewMessage, NewProviderConfig, NewWebhook, Pagination, ProviderConfig,
-    ProviderConfigRepository, Webhook, WebhookRepository,
+    MessageRepository, NewMessage, NewProviderConfig, NewSuppression, NewWebhook, Pagination,
+    ProviderConfig, ProviderConfigRepository, Suppression, SuppressionRepository, Webhook,
+    WebhookRepository,
 };
 
 // ---------------------------------------------------------------------------
@@ -44,13 +45,25 @@ impl AccountRepository for MockAccountRepo {
 
 struct MockMessageRepo {
     messages: Mutex<Vec<Message>>,
+    delivery_events: Mutex<Vec<DeliveryEvent>>,
 }
 
 impl MockMessageRepo {
     fn new() -> Self {
         Self {
             messages: Mutex::new(Vec::new()),
+            delivery_events: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Directly insert a pre-built message without going through the HTTP layer — test helper.
+    fn seed(&self, msg: Message) {
+        self.messages.lock().unwrap().push(msg);
+    }
+
+    /// Read a snapshot of all delivery events — test helper.
+    fn delivery_events_snapshot(&self) -> Vec<DeliveryEvent> {
+        self.delivery_events.lock().unwrap().clone()
     }
 }
 
@@ -106,26 +119,62 @@ impl MessageRepository for MockMessageRepo {
 
     async fn update_status(
         &self,
-        _id: Uuid,
-        _status: &str,
-        _provider: Option<&str>,
-        _provider_message_id: Option<&str>,
-        _error_message: Option<&str>,
+        id: Uuid,
+        status: &str,
+        provider: Option<&str>,
+        provider_message_id: Option<&str>,
+        error_message: Option<&str>,
     ) -> Result<(), DbError> {
+        let mut msgs = self.messages.lock().unwrap();
+        if let Some(m) = msgs.iter_mut().find(|m| m.id == id) {
+            m.status = status.to_string();
+            if let Some(p) = provider {
+                m.provider = Some(p.to_string());
+            }
+            if let Some(pmid) = provider_message_id {
+                m.provider_message_id = Some(pmid.to_string());
+            }
+            if let Some(err) = error_message {
+                m.error_message = Some(err.to_string());
+            }
+        }
         Ok(())
     }
 
     async fn insert_delivery_event(
         &self,
-        _message_id: Uuid,
-        _status: &str,
-        _provider_data: Option<serde_json::Value>,
+        message_id: Uuid,
+        status: &str,
+        provider_data: Option<serde_json::Value>,
     ) -> Result<(), DbError> {
+        self.delivery_events.lock().unwrap().push(DeliveryEvent {
+            id: Uuid::new_v4(),
+            message_id,
+            status: status.to_string(),
+            provider_data,
+            created_at: Utc::now(),
+        });
         Ok(())
     }
 
-    async fn get_delivery_events(&self, _message_id: Uuid) -> Result<Vec<DeliveryEvent>, DbError> {
-        Ok(vec![])
+    async fn get_delivery_events(&self, message_id: Uuid) -> Result<Vec<DeliveryEvent>, DbError> {
+        let events = self.delivery_events.lock().unwrap();
+        Ok(events
+            .iter()
+            .filter(|e| e.message_id == message_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn find_by_provider_message_id(
+        &self,
+        provider_message_id: &str,
+    ) -> Result<Option<Message>, DbError> {
+        let msgs = self.messages.lock().unwrap();
+        Ok(msgs
+            .iter()
+            .find(|m| m.provider_message_id.as_deref() == Some(provider_message_id))
+            .cloned())
     }
 }
 
@@ -196,6 +245,92 @@ impl WebhookRepository for MockWebhookRepo {
     }
 }
 
+struct MockSuppressionRepo {
+    entries: Mutex<Vec<Suppression>>,
+}
+
+impl MockSuppressionRepo {
+    fn new() -> Self {
+        Self {
+            entries: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn snapshot(&self) -> Vec<Suppression> {
+        self.entries.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl SuppressionRepository for MockSuppressionRepo {
+    async fn is_suppressed(
+        &self,
+        account_id: Uuid,
+        channel: &str,
+        recipient: &str,
+    ) -> Result<Option<String>, DbError> {
+        let entries = self.entries.lock().unwrap();
+        Ok(entries
+            .iter()
+            .find(|e| {
+                e.account_id == account_id && e.channel == channel && e.recipient == recipient
+            })
+            .map(|e| e.reason.clone()))
+    }
+
+    async fn add(&self, entry: &NewSuppression) -> Result<(), DbError> {
+        let mut entries = self.entries.lock().unwrap();
+        let exists = entries.iter().any(|e| {
+            e.account_id == entry.account_id
+                && e.channel == entry.channel
+                && e.recipient == entry.recipient
+        });
+        if !exists {
+            entries.push(Suppression {
+                account_id: entry.account_id,
+                channel: entry.channel.clone(),
+                recipient: entry.recipient.clone(),
+                reason: entry.reason.clone(),
+                source: entry.source.clone(),
+                created_at: Utc::now(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn remove(
+        &self,
+        account_id: Uuid,
+        channel: &str,
+        recipient: &str,
+    ) -> Result<bool, DbError> {
+        let mut entries = self.entries.lock().unwrap();
+        let before = entries.len();
+        entries.retain(|e| {
+            !(e.account_id == account_id && e.channel == channel && e.recipient == recipient)
+        });
+        Ok(entries.len() < before)
+    }
+
+    async fn list(
+        &self,
+        account_id: Uuid,
+        channel: Option<&str>,
+        pagination: &Pagination,
+    ) -> Result<Vec<Suppression>, DbError> {
+        let entries = self.entries.lock().unwrap();
+        let filtered: Vec<_> = entries
+            .iter()
+            .filter(|e| e.account_id == account_id)
+            .filter(|e| channel.is_none_or(|c| e.channel == c))
+            .skip(pagination.offset as usize)
+            .take(pagination.limit as usize)
+            .cloned()
+            .collect();
+        Ok(filtered)
+    }
+}
+
 struct MockProviderConfigRepo;
 
 #[async_trait]
@@ -237,7 +372,14 @@ impl ProviderConfigRepository for MockProviderConfigRepo {
 const TEST_API_KEY: &str =
     "ch_test_abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
 
-fn test_state() -> Arc<AppState> {
+struct TestFixture {
+    state: Arc<AppState>,
+    suppressions: Arc<MockSuppressionRepo>,
+    messages: Arc<MockMessageRepo>,
+    account_id: Uuid,
+}
+
+fn test_fixture() -> TestFixture {
     let key_hash = hex::encode(Sha256::digest(TEST_API_KEY.as_bytes()));
     let account_id = Uuid::new_v4();
     let key_id = Uuid::new_v4();
@@ -265,25 +407,36 @@ fn test_state() -> Arc<AppState> {
         key_hash,
     });
 
-    let message_repo = Arc::new(MockMessageRepo::new());
+    let messages = Arc::new(MockMessageRepo::new());
+    let suppressions = Arc::new(MockSuppressionRepo::new());
     let api_key_repo = Arc::new(MockApiKeyRepo);
     let provider_config_repo = Arc::new(MockProviderConfigRepo);
     let webhook_repo = Arc::new(MockWebhookRepo);
 
-    // Use a dummy Redis URL — tests that hit Redis will fail,
-    // but auth + DB-only tests will work
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
-
     let config = Arc::new(Config::from_env());
-    Arc::new(AppState::with_repos(
+
+    let state = Arc::new(AppState::with_repos(
         redis,
         config,
         account_repo,
-        message_repo,
+        messages.clone(),
         api_key_repo,
         provider_config_repo,
         webhook_repo,
-    ))
+        suppressions.clone(),
+    ));
+
+    TestFixture {
+        state,
+        suppressions,
+        messages,
+        account_id,
+    }
+}
+
+fn test_state() -> Arc<AppState> {
+    test_fixture().state
 }
 
 async fn response_body(resp: axum::response::Response) -> Value {
@@ -868,4 +1021,405 @@ async fn billing_checkout_without_stripe_returns_503() {
 
     // No STRIPE_SECRET_KEY configured → 503
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+// ---------------------------------------------------------------------------
+// Suppression list tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_suppressions_empty_returns_200() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = response_body(resp).await;
+    assert_eq!(body["data"], serde_json::json!([]));
+    assert_eq!(body["limit"], 20);
+    assert_eq!(body["offset"], 0);
+}
+
+#[tokio::test]
+async fn create_suppression_normalizes_email_and_returns_201() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"  Alice@Example.COM "}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = response_body(resp).await;
+    assert_eq!(body["recipient"], "alice@example.com");
+    assert_eq!(body["reason"], "manual");
+    assert_eq!(body["source"], "api");
+}
+
+#[tokio::test]
+async fn create_suppression_rejects_bad_e164() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"sms","recipient":"0812345678"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn delete_suppression_round_trip() {
+    let state = test_state();
+    let app = create_router(Arc::clone(&state));
+
+    // Add
+    let add = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"bob@example.com"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(add.status(), StatusCode::CREATED);
+
+    // Delete
+    let del = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/suppressions/email/bob@example.com")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(del.status(), StatusCode::NO_CONTENT);
+
+    // Delete again → 404
+    let del2 = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/suppressions/email/bob@example.com")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(del2.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn sms_send_to_suppressed_recipient_returns_422() {
+    let state = test_state();
+    let app = create_router(Arc::clone(&state));
+
+    // Pre-populate suppression
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"sms","recipient":"+14155552671"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"to":"+14155552671","body":"hi"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = response_body(resp).await;
+    assert_eq!(body["error"]["code"], "recipient_suppressed");
+    assert_eq!(body["error"]["reason"], "manual");
+}
+
+#[tokio::test]
+async fn email_send_to_suppressed_recipient_returns_422() {
+    let app = create_router(test_state());
+
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"alice@example.com"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/email/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"to":"ALICE@example.com","subject":"hi","body":"hi"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = response_body(resp).await;
+    assert_eq!(body["error"]["code"], "recipient_suppressed");
+}
+
+#[tokio::test]
+async fn otp_send_to_suppressed_email_returns_422() {
+    let app = create_router(test_state());
+
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"otp@example.com"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/otp/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"to":"otp@example.com"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn email_batch_with_suppressed_recipient_returns_207() {
+    let app = create_router(test_state());
+
+    // Suppress one recipient
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"bad@example.com"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/email/send-batch")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"recipients":[
+                        {"to":"good@example.com","subject":"x","body":"y"},
+                        {"to":"bad@example.com","subject":"x","body":"y"}
+                    ]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::MULTI_STATUS);
+    let body = response_body(resp).await;
+    let messages = body["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2);
+    let suppressed: Vec<_> = messages
+        .iter()
+        .filter(|m| m["status"] == "suppressed")
+        .collect();
+    assert_eq!(suppressed.len(), 1);
+    assert_eq!(suppressed[0]["to"], "bad@example.com");
+    assert_eq!(suppressed[0]["reason"], "manual");
+}
+
+#[tokio::test]
+async fn bounce_creates_suppression_and_marks_message_bounced() {
+    std::env::set_var("BOUNCE_SECRET", "test-secret");
+
+    let fx = test_fixture();
+    let app = create_router(Arc::clone(&fx.state));
+
+    // Seed a message row directly (bypassing HTTP/Redis so the test stays self-contained).
+    let seeded_id = Uuid::new_v4();
+    fx.messages.seed(Message {
+        id: seeded_id,
+        account_id: fx.account_id,
+        api_key_id: Uuid::new_v4(),
+        channel: "email".into(),
+        provider: None,
+        sender: None,
+        recipient: "bouncy@example.com".into(),
+        subject: Some("x".into()),
+        body: "y".into(),
+        status: "queued".into(),
+        provider_message_id: Some("bounce-test-1".into()),
+        error_message: None,
+        cost_microdollars: 0,
+        attempts: 0,
+        environment: "test".into(),
+        created_at: Utc::now(),
+        delivered_at: None,
+    });
+
+    // POST the bounce.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/internal/bounces")
+                .header("x-chorus-secret", "test-secret")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"recipient":"bouncy@example.com","reason":"5.1.1 user unknown","message_id":"bounce-test-1"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Verify suppression created.
+    let snapshot = fx.suppressions.snapshot();
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(snapshot[0].channel, "email");
+    assert_eq!(snapshot[0].recipient, "bouncy@example.com");
+    assert_eq!(snapshot[0].reason, "hard_bounce");
+    assert_eq!(snapshot[0].source, "chorus-mail");
+    assert_eq!(snapshot[0].account_id, fx.account_id);
+
+    // Verify message status flipped to "bounced".
+    let updated = fx
+        .messages
+        .find_by_id(seeded_id, fx.account_id)
+        .await
+        .unwrap()
+        .expect("seeded message should still exist");
+    assert_eq!(updated.status, "bounced");
+    assert_eq!(updated.error_message.as_deref(), Some("5.1.1 user unknown"));
+
+    // Verify a delivery_event row was appended with status="bounced".
+    let events = fx.messages.delivery_events_snapshot();
+    let bounced_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.message_id == seeded_id && e.status == "bounced")
+        .collect();
+    assert_eq!(bounced_events.len(), 1);
+    let provider_data = bounced_events[0].provider_data.as_ref().unwrap();
+    assert_eq!(provider_data["reason"], "5.1.1 user unknown");
+    assert_eq!(provider_data["source"], "chorus-mail");
+}
+
+#[tokio::test]
+async fn bounce_with_unknown_message_id_returns_200_no_suppression() {
+    std::env::set_var("BOUNCE_SECRET", "test-secret");
+
+    let fx = test_fixture();
+    let app = create_router(Arc::clone(&fx.state));
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/internal/bounces")
+                .header("x-chorus-secret", "test-secret")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"recipient":"x@example.com","reason":"5.1.1","message_id":"never-existed"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(fx.suppressions.snapshot().is_empty());
 }

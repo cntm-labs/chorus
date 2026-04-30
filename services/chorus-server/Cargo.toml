@@ -30,6 +30,7 @@ hmac = { version = "0.12", features = ["std"] }
 reqwest = { workspace = true }
 async-trait = { workspace = true }
 hickory-resolver = { workspace = true }
+regex = "1"
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.16", default-features = false, features = ["http-listener"] }
 

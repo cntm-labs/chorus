@@ -2,6 +2,7 @@ pub mod admin;
 pub mod billing;
 pub mod postgres;
 pub mod provider_config;
+pub mod suppression;
 pub mod webhook;
 
 pub use admin::{AdminRepository, PgAdminRepository};
@@ -143,6 +144,12 @@ pub trait MessageRepository: Send + Sync {
 
     /// Get all delivery events for a message.
     async fn get_delivery_events(&self, message_id: Uuid) -> Result<Vec<DeliveryEvent>, DbError>;
+
+    /// Find a message by its provider's message id (no account scoping — internal use only).
+    async fn find_by_provider_message_id(
+        &self,
+        provider_message_id: &str,
+    ) -> Result<Option<Message>, DbError>;
 }
 
 /// A provider configuration for per-account routing.
@@ -262,4 +269,55 @@ pub trait ApiKeyRepository: Send + Sync {
 
     /// Soft-revoke an API key.
     async fn revoke(&self, id: Uuid, account_id: Uuid) -> Result<(), DbError>;
+}
+
+/// A suppression list entry for a recipient that should not receive messages.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Suppression {
+    pub account_id: Uuid,
+    pub channel: String,
+    pub recipient: String,
+    pub reason: String,
+    pub source: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Parameters for inserting a new suppression entry.
+pub struct NewSuppression {
+    pub account_id: Uuid,
+    pub channel: String,
+    pub recipient: String,
+    pub reason: String,
+    pub source: String,
+}
+
+/// Suppression list management.
+#[async_trait]
+pub trait SuppressionRepository: Send + Sync {
+    /// Returns the suppression `reason` if `recipient` is suppressed for the given account+channel.
+    async fn is_suppressed(
+        &self,
+        account_id: Uuid,
+        channel: &str,
+        recipient: &str,
+    ) -> Result<Option<String>, DbError>;
+
+    /// Insert a suppression. Idempotent: existing rows are left untouched.
+    async fn add(&self, entry: &NewSuppression) -> Result<(), DbError>;
+
+    /// Remove a suppression. Returns `true` if a row was deleted.
+    async fn remove(
+        &self,
+        account_id: Uuid,
+        channel: &str,
+        recipient: &str,
+    ) -> Result<bool, DbError>;
+
+    /// List suppressions for an account, optionally filtered by channel, with pagination.
+    async fn list(
+        &self,
+        account_id: Uuid,
+        channel: Option<&str>,
+        pagination: &Pagination,
+    ) -> Result<Vec<Suppression>, DbError>;
 }

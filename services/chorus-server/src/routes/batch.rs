@@ -54,9 +54,16 @@ pub struct SendEmailBatchRequest {
 /// One message result in the batch response.
 #[derive(Serialize)]
 pub struct BatchMessageResult {
-    pub message_id: Uuid,
+    /// `Some` only when `status == "queued"`.
+    pub message_id: Option<Uuid>,
     pub to: String,
+    /// `"queued"` (insert + enqueue both succeeded), `"suppressed"`,
+    /// `"failed"` (this entry's insert or enqueue failed), or
+    /// `"skipped"` (an earlier entry failed; this one was never attempted).
     pub status: &'static str,
+    /// Present when `status == "suppressed"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Batch send response. Includes partial results if an error occurred mid-batch.
@@ -69,7 +76,10 @@ pub struct BatchSendResponse {
 
 /// Queue a batch of SMS messages. Returns 202 Accepted.
 ///
-/// On partial failure, returns already-queued messages with an error field.
+/// Suppressed recipients are filtered out in a first pass before any enqueue
+/// operations. Returns 207 Multi-Status when at least one recipient is
+/// suppressed; 202 Accepted when all entries are queued.
+/// On partial enqueue failure, returns already-queued results with an error field.
 pub async fn send_sms_batch(
     State(state): State<Arc<AppState>>,
     ctx: AccountContext,
@@ -77,9 +87,57 @@ pub async fn send_sms_batch(
 ) -> Result<(StatusCode, Json<BatchSendResponse>), (StatusCode, String)> {
     validate_batch_size(req.recipients.len())?;
 
-    let mut results = Vec::with_capacity(req.recipients.len());
+    // --- Pass 1: suppression check for all recipients ---
+    let mut results: Vec<BatchMessageResult> = Vec::with_capacity(req.recipients.len());
+    let mut any_suppressed = false;
 
     for recipient in &req.recipients {
+        match crate::suppression::check_suppression(&state, ctx.account_id, "sms", &recipient.to)
+            .await
+        {
+            Err(crate::suppression::SuppressionRejection::Suppressed { reason }) => {
+                any_suppressed = true;
+                results.push(BatchMessageResult {
+                    message_id: None,
+                    to: recipient.to.clone(),
+                    status: "suppressed",
+                    reason: Some(reason),
+                });
+            }
+            Err(crate::suppression::SuppressionRejection::InvalidRecipient) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid recipient: {}", recipient.to),
+                ));
+            }
+            Err(crate::suppression::SuppressionRejection::Db(e)) => {
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+            }
+            Ok(()) => {
+                // Placeholder — Pass 2 transitions to "queued" / "failed" / "skipped".
+                results.push(BatchMessageResult {
+                    message_id: None,
+                    to: recipient.to.clone(),
+                    status: "pending",
+                    reason: None,
+                });
+            }
+        }
+    }
+
+    // --- Pass 2: insert + enqueue non-suppressed recipients ---
+    let mut enqueue_error: Option<String> = None;
+
+    for (i, recipient) in req.recipients.iter().enumerate() {
+        if results[i].status == "suppressed" {
+            continue;
+        }
+        if enqueue_error.is_some() {
+            // An earlier entry failed; don't attempt this one.
+            results[i].status = "skipped";
+            continue;
+        }
+
         let new_msg = NewMessage {
             account_id: ctx.account_id,
             api_key_id: ctx.key_id,
@@ -94,13 +152,9 @@ pub async fn send_sms_batch(
         let message = match state.message_repo().insert(&new_msg).await {
             Ok(m) => m,
             Err(e) => {
-                return Ok((
-                    StatusCode::ACCEPTED,
-                    Json(BatchSendResponse {
-                        messages: results,
-                        error: Some(format!("failed at recipient {}: {}", recipient.to, e)),
-                    }),
-                ));
+                results[i].status = "failed";
+                enqueue_error = Some(format!("failed at recipient {}: {}", recipient.to, e));
+                continue;
             }
         };
 
@@ -112,34 +166,35 @@ pub async fn send_sms_batch(
             attempt: 0,
         };
         if let Err(e) = crate::queue::enqueue::notify(&state, &job).await {
-            return Ok((
-                StatusCode::ACCEPTED,
-                Json(BatchSendResponse {
-                    messages: results,
-                    error: Some(format!("failed to enqueue for {}: {}", recipient.to, e)),
-                }),
-            ));
+            results[i].status = "failed";
+            enqueue_error = Some(format!("failed to enqueue for {}: {}", recipient.to, e));
+            continue;
         }
 
-        results.push(BatchMessageResult {
-            message_id: message.id,
-            to: recipient.to.clone(),
-            status: "queued",
-        });
+        results[i].message_id = Some(message.id);
+        results[i].status = "queued";
     }
 
+    let status = if any_suppressed {
+        StatusCode::MULTI_STATUS
+    } else {
+        StatusCode::ACCEPTED
+    };
     Ok((
-        StatusCode::ACCEPTED,
+        status,
         Json(BatchSendResponse {
             messages: results,
-            error: None,
+            error: enqueue_error,
         }),
     ))
 }
 
 /// Queue a batch of email messages. Returns 202 Accepted.
 ///
-/// On partial failure, returns already-queued messages with an error field.
+/// Suppressed recipients are filtered out in a first pass before any enqueue
+/// operations. Returns 207 Multi-Status when at least one recipient is
+/// suppressed; 202 Accepted when all entries are queued.
+/// On partial enqueue failure, returns already-queued results with an error field.
 pub async fn send_email_batch(
     State(state): State<Arc<AppState>>,
     ctx: AccountContext,
@@ -147,9 +202,57 @@ pub async fn send_email_batch(
 ) -> Result<(StatusCode, Json<BatchSendResponse>), (StatusCode, String)> {
     validate_batch_size(req.recipients.len())?;
 
-    let mut results = Vec::with_capacity(req.recipients.len());
+    // --- Pass 1: suppression check for all recipients ---
+    let mut results: Vec<BatchMessageResult> = Vec::with_capacity(req.recipients.len());
+    let mut any_suppressed = false;
 
     for recipient in &req.recipients {
+        match crate::suppression::check_suppression(&state, ctx.account_id, "email", &recipient.to)
+            .await
+        {
+            Err(crate::suppression::SuppressionRejection::Suppressed { reason }) => {
+                any_suppressed = true;
+                results.push(BatchMessageResult {
+                    message_id: None,
+                    to: recipient.to.clone(),
+                    status: "suppressed",
+                    reason: Some(reason),
+                });
+            }
+            Err(crate::suppression::SuppressionRejection::InvalidRecipient) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid recipient: {}", recipient.to),
+                ));
+            }
+            Err(crate::suppression::SuppressionRejection::Db(e)) => {
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+            }
+            Ok(()) => {
+                // Placeholder — Pass 2 transitions to "queued" / "failed" / "skipped".
+                results.push(BatchMessageResult {
+                    message_id: None,
+                    to: recipient.to.clone(),
+                    status: "pending",
+                    reason: None,
+                });
+            }
+        }
+    }
+
+    // --- Pass 2: insert + enqueue non-suppressed recipients ---
+    let mut enqueue_error: Option<String> = None;
+
+    for (i, recipient) in req.recipients.iter().enumerate() {
+        if results[i].status == "suppressed" {
+            continue;
+        }
+        if enqueue_error.is_some() {
+            // An earlier entry failed; don't attempt this one.
+            results[i].status = "skipped";
+            continue;
+        }
+
         let new_msg = NewMessage {
             account_id: ctx.account_id,
             api_key_id: ctx.key_id,
@@ -164,13 +267,9 @@ pub async fn send_email_batch(
         let message = match state.message_repo().insert(&new_msg).await {
             Ok(m) => m,
             Err(e) => {
-                return Ok((
-                    StatusCode::ACCEPTED,
-                    Json(BatchSendResponse {
-                        messages: results,
-                        error: Some(format!("failed at recipient {}: {}", recipient.to, e)),
-                    }),
-                ));
+                results[i].status = "failed";
+                enqueue_error = Some(format!("failed at recipient {}: {}", recipient.to, e));
+                continue;
             }
         };
 
@@ -182,27 +281,25 @@ pub async fn send_email_batch(
             attempt: 0,
         };
         if let Err(e) = crate::queue::enqueue::notify(&state, &job).await {
-            return Ok((
-                StatusCode::ACCEPTED,
-                Json(BatchSendResponse {
-                    messages: results,
-                    error: Some(format!("failed to enqueue for {}: {}", recipient.to, e)),
-                }),
-            ));
+            results[i].status = "failed";
+            enqueue_error = Some(format!("failed to enqueue for {}: {}", recipient.to, e));
+            continue;
         }
 
-        results.push(BatchMessageResult {
-            message_id: message.id,
-            to: recipient.to.clone(),
-            status: "queued",
-        });
+        results[i].message_id = Some(message.id);
+        results[i].status = "queued";
     }
 
+    let status = if any_suppressed {
+        StatusCode::MULTI_STATUS
+    } else {
+        StatusCode::ACCEPTED
+    };
     Ok((
-        StatusCode::ACCEPTED,
+        status,
         Json(BatchSendResponse {
             messages: results,
-            error: None,
+            error: enqueue_error,
         }),
     ))
 }

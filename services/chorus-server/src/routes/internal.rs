@@ -29,26 +29,85 @@ pub async fn handle_bounce(
     headers: HeaderMap,
     Json(body): Json<BounceNotification>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    // Validate shared secret
+    // Validate shared secret.
     let expected = state.config().bounce_secret.as_deref().unwrap_or("");
     let provided = headers
         .get("x-chorus-secret")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-
     if expected.is_empty() || provided != expected {
         return Err((StatusCode::UNAUTHORIZED, "invalid secret".into()));
     }
 
-    tracing::warn!(
-        recipient = %body.recipient,
-        reason = %body.reason,
-        "bounce received from chorus-mail"
-    );
+    let pmid = body.message_id.trim_matches(|c| c == '<' || c == '>');
 
-    // TODO: look up message by provider message_id and update status to "bounced"
-    // For now, log the bounce. Full implementation requires a message lookup by
-    // provider_message_id which can be added as a follow-up.
+    let message = state
+        .message_repo()
+        .find_by_provider_message_id(pmid)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let Some(message) = message else {
+        tracing::warn!(
+            message_id = %pmid,
+            recipient = %body.recipient,
+            "bounce arrived for unknown provider_message_id; ignoring"
+        );
+        return Ok(StatusCode::OK);
+    };
+
+    // Use the recipient Chorus originally accepted (canonical), not the bounce envelope's
+    // recipient (postfix may have rewritten via aliasing).
+    let normalized = match crate::suppression::normalize(&message.channel, &message.recipient) {
+        Ok(n) => n,
+        Err(_) => {
+            tracing::warn!(
+                channel = %message.channel,
+                recipient = %message.recipient,
+                "could not normalize stored recipient — skipping suppression write"
+            );
+            return Ok(StatusCode::OK);
+        }
+    };
+
+    // Write suppression (idempotent), update message status, append delivery event.
+    state
+        .suppression_repo()
+        .add(&crate::db::NewSuppression {
+            account_id: message.account_id,
+            channel: message.channel.clone(),
+            recipient: normalized,
+            reason: "hard_bounce".into(),
+            source: "chorus-mail".into(),
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    state
+        .message_repo()
+        .update_status(message.id, "bounced", None, None, Some(&body.reason))
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    state
+        .message_repo()
+        .insert_delivery_event(
+            message.id,
+            "bounced",
+            Some(serde_json::json!({
+                "reason": body.reason,
+                "source": "chorus-mail",
+            })),
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    tracing::info!(
+        message_id = %message.id,
+        account_id = %message.account_id,
+        recipient = %body.recipient,
+        "suppression added from chorus-mail bounce"
+    );
 
     Ok(StatusCode::OK)
 }
