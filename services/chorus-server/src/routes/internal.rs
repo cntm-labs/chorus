@@ -70,19 +70,12 @@ pub async fn handle_bounce(
         }
     };
 
-    // Write suppression (idempotent), update message status, append delivery event.
-    state
-        .suppression_repo()
-        .add(&crate::db::NewSuppression {
-            account_id: message.account_id,
-            channel: message.channel.clone(),
-            recipient: normalized,
-            reason: "hard_bounce".into(),
-            source: "chorus-mail".into(),
-        })
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
+    // Three sequential writes; chorus-mail's bounce-handler shell `exit 0`s on
+    // curl failure so postfix won't retry. Order matters: write the most
+    // user-critical state (message status + audit trail) first, suppression
+    // last. Worst case if a later write fails: recipient could receive a
+    // re-send (recoverable on the next bounce) — better than message stuck
+    // in `queued` after suppression was already written.
     state
         .message_repo()
         .update_status(message.id, "bounced", None, None, Some(&body.reason))
@@ -99,6 +92,19 @@ pub async fn handle_bounce(
                 "source": "chorus-mail",
             })),
         )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Discard the returned row + inserted flag; bounce path doesn't surface them.
+    let _ = state
+        .suppression_repo()
+        .add(&crate::db::NewSuppression {
+            account_id: message.account_id,
+            channel: message.channel.clone(),
+            recipient: normalized,
+            reason: "hard_bounce".into(),
+            source: "chorus-mail".into(),
+        })
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

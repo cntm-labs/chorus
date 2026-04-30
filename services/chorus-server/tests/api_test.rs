@@ -12,10 +12,10 @@ use uuid::Uuid;
 use chorus_server::app::{create_router, AppState};
 use chorus_server::config::Config;
 use chorus_server::db::{
-    Account, AccountRepository, ApiKey, ApiKeyRepository, DbError, DeliveryEvent, Message,
-    MessageRepository, NewMessage, NewProviderConfig, NewSuppression, NewWebhook, Pagination,
-    ProviderConfig, ProviderConfigRepository, Suppression, SuppressionRepository, Webhook,
-    WebhookRepository,
+    Account, AccountRepository, AddSuppressionResult, ApiKey, ApiKeyRepository, DbError,
+    DeliveryEvent, Message, MessageRepository, NewMessage, NewProviderConfig, NewSuppression,
+    NewWebhook, Pagination, ProviderConfig, ProviderConfigRepository, Suppression,
+    SuppressionRepository, Webhook, WebhookRepository,
 };
 
 // ---------------------------------------------------------------------------
@@ -278,24 +278,31 @@ impl SuppressionRepository for MockSuppressionRepo {
             .map(|e| e.reason.clone()))
     }
 
-    async fn add(&self, entry: &NewSuppression) -> Result<(), DbError> {
+    async fn add(&self, entry: &NewSuppression) -> Result<AddSuppressionResult, DbError> {
         let mut entries = self.entries.lock().unwrap();
-        let exists = entries.iter().any(|e| {
+        if let Some(existing) = entries.iter().find(|e| {
             e.account_id == entry.account_id
                 && e.channel == entry.channel
                 && e.recipient == entry.recipient
-        });
-        if !exists {
-            entries.push(Suppression {
-                account_id: entry.account_id,
-                channel: entry.channel.clone(),
-                recipient: entry.recipient.clone(),
-                reason: entry.reason.clone(),
-                source: entry.source.clone(),
-                created_at: Utc::now(),
+        }) {
+            return Ok(AddSuppressionResult {
+                entry: existing.clone(),
+                inserted: false,
             });
         }
-        Ok(())
+        let row = Suppression {
+            account_id: entry.account_id,
+            channel: entry.channel.clone(),
+            recipient: entry.recipient.clone(),
+            reason: entry.reason.clone(),
+            source: entry.source.clone(),
+            created_at: Utc::now(),
+        };
+        entries.push(row.clone());
+        Ok(AddSuppressionResult {
+            entry: row,
+            inserted: true,
+        })
     }
 
     async fn remove(
@@ -1422,4 +1429,155 @@ async fn bounce_with_unknown_message_id_returns_200_no_suppression() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert!(fx.suppressions.snapshot().is_empty());
+}
+
+#[tokio::test]
+async fn create_suppression_idempotent_returns_200_on_duplicate() {
+    let app = create_router(test_state());
+
+    // First call → 201 Created
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"dup@example.com"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::CREATED);
+    let first_body = response_body(first).await;
+    let first_created_at = first_body["created_at"].as_str().unwrap().to_string();
+
+    // Second call → 200 OK (idempotent), same created_at echoed back
+    let second = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"dup@example.com"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::OK);
+    let second_body = response_body(second).await;
+    assert_eq!(second_body["created_at"], first_created_at);
+    assert_eq!(second_body["reason"], "manual");
+}
+
+#[tokio::test]
+async fn create_suppression_forces_server_side_reason_and_source() {
+    // Even if a client sends extra fields like `reason`/`source`, the server
+    // must override them. CreateSuppressionRequest only deserializes
+    // `channel` and `recipient`, so unknown fields are silently dropped —
+    // but this test pins the contract.
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"forced@example.com","reason":"hard_bounce","source":"chorus-mail"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = response_body(resp).await;
+    assert_eq!(body["reason"], "manual");
+    assert_eq!(body["source"], "api");
+}
+
+#[tokio::test]
+async fn list_suppressions_filters_by_channel() {
+    let app = create_router(test_state());
+
+    // Seed one email + one sms suppression.
+    for payload in [
+        r#"{"channel":"email","recipient":"e@example.com"}"#,
+        r#"{"channel":"sms","recipient":"+14155552671"}"#,
+    ] {
+        let _ = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/suppressions")
+                    .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(payload))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/suppressions?channel=email")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = response_body(resp).await;
+    let data = body["data"].as_array().unwrap();
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0]["channel"], "email");
+    assert_eq!(data[0]["recipient"], "e@example.com");
+}
+
+#[tokio::test]
+async fn sms_batch_with_invalid_e164_marks_entry_invalid_and_continues() {
+    let app = create_router(test_state());
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send-batch")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"recipients":[
+                        {"to":"+14155552671","body":"hi"},
+                        {"to":"0812345678","body":"bad e164"}
+                    ]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::MULTI_STATUS);
+    let body = response_body(resp).await;
+    let messages = body["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2);
+    let invalid: Vec<_> = messages
+        .iter()
+        .filter(|m| m["status"] == "invalid")
+        .collect();
+    assert_eq!(invalid.len(), 1);
+    assert_eq!(invalid[0]["to"], "0812345678");
+    assert!(invalid[0]["reason"].as_str().unwrap().contains("E.164"));
 }

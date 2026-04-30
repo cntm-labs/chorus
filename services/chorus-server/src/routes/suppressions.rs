@@ -81,6 +81,10 @@ pub async fn list_suppressions(
 }
 
 /// `POST /v1/suppressions`
+///
+/// Returns `201 Created` on a fresh insert; `200 OK` if the entry already
+/// existed (idempotent). The response body always echoes the canonical row
+/// from the database, including its real `created_at`.
 pub async fn create_suppression(
     State(state): State<Arc<AppState>>,
     ctx: AccountContext,
@@ -91,27 +95,24 @@ pub async fn create_suppression(
 
     let entry = NewSuppression {
         account_id: ctx.account_id,
-        channel: req.channel.clone(),
-        recipient: normalized.clone(),
+        channel: req.channel,
+        recipient: normalized,
         reason: "manual".into(),
         source: "api".into(),
     };
 
-    state
+    let result = state
         .suppression_repo()
         .add(&entry)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let resp = SuppressionResponse {
-        channel: req.channel,
-        recipient: normalized,
-        reason: "manual".into(),
-        source: "api".into(),
-        created_at: chrono::Utc::now().to_rfc3339(),
+    let status = if result.inserted {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
     };
-
-    Ok((StatusCode::CREATED, Json(resp)))
+    Ok((status, Json(SuppressionResponse::from(result.entry))))
 }
 
 /// `DELETE /v1/suppressions/{channel}/{recipient}`

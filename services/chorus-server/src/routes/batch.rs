@@ -58,10 +58,12 @@ pub struct BatchMessageResult {
     pub message_id: Option<Uuid>,
     pub to: String,
     /// `"queued"` (insert + enqueue both succeeded), `"suppressed"`,
+    /// `"invalid"` (recipient failed format validation, e.g. non-E.164 SMS),
     /// `"failed"` (this entry's insert or enqueue failed), or
     /// `"skipped"` (an earlier entry failed; this one was never attempted).
     pub status: &'static str,
-    /// Present when `status == "suppressed"`.
+    /// Present when `status == "suppressed"` (suppression reason)
+    /// or `status == "invalid"` (validation error description).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -89,14 +91,12 @@ pub async fn send_sms_batch(
 
     // --- Pass 1: suppression check for all recipients ---
     let mut results: Vec<BatchMessageResult> = Vec::with_capacity(req.recipients.len());
-    let mut any_suppressed = false;
 
     for recipient in &req.recipients {
         match crate::suppression::check_suppression(&state, ctx.account_id, "sms", &recipient.to)
             .await
         {
             Err(crate::suppression::SuppressionRejection::Suppressed { reason }) => {
-                any_suppressed = true;
                 results.push(BatchMessageResult {
                     message_id: None,
                     to: recipient.to.clone(),
@@ -105,10 +105,12 @@ pub async fn send_sms_batch(
                 });
             }
             Err(crate::suppression::SuppressionRejection::InvalidRecipient) => {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    format!("invalid recipient: {}", recipient.to),
-                ));
+                results.push(BatchMessageResult {
+                    message_id: None,
+                    to: recipient.to.clone(),
+                    status: "invalid",
+                    reason: Some("not a valid E.164 phone number".into()),
+                });
             }
             Err(crate::suppression::SuppressionRejection::Db(e)) => {
                 return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
@@ -129,7 +131,7 @@ pub async fn send_sms_batch(
     let mut enqueue_error: Option<String> = None;
 
     for (i, recipient) in req.recipients.iter().enumerate() {
-        if results[i].status == "suppressed" {
+        if results[i].status != "pending" {
             continue;
         }
         if enqueue_error.is_some() {
@@ -175,10 +177,13 @@ pub async fn send_sms_batch(
         results[i].status = "queued";
     }
 
-    let status = if any_suppressed {
-        StatusCode::MULTI_STATUS
-    } else {
+    // 207 when any entry has a non-queued outcome (suppressed/invalid/failed/skipped),
+    // 202 only when all entries successfully queued.
+    let all_queued = results.iter().all(|r| r.status == "queued");
+    let status = if all_queued {
         StatusCode::ACCEPTED
+    } else {
+        StatusCode::MULTI_STATUS
     };
     Ok((
         status,
@@ -204,14 +209,12 @@ pub async fn send_email_batch(
 
     // --- Pass 1: suppression check for all recipients ---
     let mut results: Vec<BatchMessageResult> = Vec::with_capacity(req.recipients.len());
-    let mut any_suppressed = false;
 
     for recipient in &req.recipients {
         match crate::suppression::check_suppression(&state, ctx.account_id, "email", &recipient.to)
             .await
         {
             Err(crate::suppression::SuppressionRejection::Suppressed { reason }) => {
-                any_suppressed = true;
                 results.push(BatchMessageResult {
                     message_id: None,
                     to: recipient.to.clone(),
@@ -220,10 +223,12 @@ pub async fn send_email_batch(
                 });
             }
             Err(crate::suppression::SuppressionRejection::InvalidRecipient) => {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    format!("invalid recipient: {}", recipient.to),
-                ));
+                results.push(BatchMessageResult {
+                    message_id: None,
+                    to: recipient.to.clone(),
+                    status: "invalid",
+                    reason: Some("invalid email address".into()),
+                });
             }
             Err(crate::suppression::SuppressionRejection::Db(e)) => {
                 return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
@@ -244,7 +249,7 @@ pub async fn send_email_batch(
     let mut enqueue_error: Option<String> = None;
 
     for (i, recipient) in req.recipients.iter().enumerate() {
-        if results[i].status == "suppressed" {
+        if results[i].status != "pending" {
             continue;
         }
         if enqueue_error.is_some() {
@@ -290,10 +295,13 @@ pub async fn send_email_batch(
         results[i].status = "queued";
     }
 
-    let status = if any_suppressed {
-        StatusCode::MULTI_STATUS
-    } else {
+    // 207 when any entry has a non-queued outcome (suppressed/invalid/failed/skipped),
+    // 202 only when all entries successfully queued.
+    let all_queued = results.iter().all(|r| r.status == "queued");
+    let status = if all_queued {
         StatusCode::ACCEPTED
+    } else {
+        StatusCode::MULTI_STATUS
     };
     Ok((
         status,
