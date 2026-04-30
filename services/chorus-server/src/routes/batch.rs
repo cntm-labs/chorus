@@ -54,12 +54,14 @@ pub struct SendEmailBatchRequest {
 /// One message result in the batch response.
 #[derive(Serialize)]
 pub struct BatchMessageResult {
-    /// `Some` for queued, `None` for suppressed.
+    /// `Some` only when `status == "queued"`.
     pub message_id: Option<Uuid>,
     pub to: String,
-    /// `"queued"` or `"suppressed"`.
+    /// `"queued"` (insert + enqueue both succeeded), `"suppressed"`,
+    /// `"failed"` (this entry's insert or enqueue failed), or
+    /// `"skipped"` (an earlier entry failed; this one was never attempted).
     pub status: &'static str,
-    /// Suppression reason when `status == "suppressed"`.
+    /// Present when `status == "suppressed"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -112,11 +114,11 @@ pub async fn send_sms_batch(
                 return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
             }
             Ok(()) => {
-                // Placeholder — will be replaced in Pass 2.
+                // Placeholder — Pass 2 transitions to "queued" / "failed" / "skipped".
                 results.push(BatchMessageResult {
                     message_id: None,
                     to: recipient.to.clone(),
-                    status: "queued",
+                    status: "pending",
                     reason: None,
                 });
             }
@@ -128,6 +130,11 @@ pub async fn send_sms_batch(
 
     for (i, recipient) in req.recipients.iter().enumerate() {
         if results[i].status == "suppressed" {
+            continue;
+        }
+        if enqueue_error.is_some() {
+            // An earlier entry failed; don't attempt this one.
+            results[i].status = "skipped";
             continue;
         }
 
@@ -145,8 +152,9 @@ pub async fn send_sms_batch(
         let message = match state.message_repo().insert(&new_msg).await {
             Ok(m) => m,
             Err(e) => {
+                results[i].status = "failed";
                 enqueue_error = Some(format!("failed at recipient {}: {}", recipient.to, e));
-                break;
+                continue;
             }
         };
 
@@ -158,11 +166,13 @@ pub async fn send_sms_batch(
             attempt: 0,
         };
         if let Err(e) = crate::queue::enqueue::notify(&state, &job).await {
+            results[i].status = "failed";
             enqueue_error = Some(format!("failed to enqueue for {}: {}", recipient.to, e));
-            break;
+            continue;
         }
 
         results[i].message_id = Some(message.id);
+        results[i].status = "queued";
     }
 
     let status = if any_suppressed {
@@ -219,11 +229,11 @@ pub async fn send_email_batch(
                 return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
             }
             Ok(()) => {
-                // Placeholder — will be replaced in Pass 2.
+                // Placeholder — Pass 2 transitions to "queued" / "failed" / "skipped".
                 results.push(BatchMessageResult {
                     message_id: None,
                     to: recipient.to.clone(),
-                    status: "queued",
+                    status: "pending",
                     reason: None,
                 });
             }
@@ -235,6 +245,11 @@ pub async fn send_email_batch(
 
     for (i, recipient) in req.recipients.iter().enumerate() {
         if results[i].status == "suppressed" {
+            continue;
+        }
+        if enqueue_error.is_some() {
+            // An earlier entry failed; don't attempt this one.
+            results[i].status = "skipped";
             continue;
         }
 
@@ -252,8 +267,9 @@ pub async fn send_email_batch(
         let message = match state.message_repo().insert(&new_msg).await {
             Ok(m) => m,
             Err(e) => {
+                results[i].status = "failed";
                 enqueue_error = Some(format!("failed at recipient {}: {}", recipient.to, e));
-                break;
+                continue;
             }
         };
 
@@ -265,11 +281,13 @@ pub async fn send_email_batch(
             attempt: 0,
         };
         if let Err(e) = crate::queue::enqueue::notify(&state, &job).await {
+            results[i].status = "failed";
             enqueue_error = Some(format!("failed to enqueue for {}: {}", recipient.to, e));
-            break;
+            continue;
         }
 
         results[i].message_id = Some(message.id);
+        results[i].status = "queued";
     }
 
     let status = if any_suppressed {

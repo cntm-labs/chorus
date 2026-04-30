@@ -1,10 +1,14 @@
 //! Suppression list helpers: recipient normalization and hot-path lookup.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::db::DbError;
+
+/// E.164: leading '+', country code 1-9, total 8-15 digits.
+static E164_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^\+[1-9]\d{1,14}$").expect("valid regex"));
 
 /// Why a normalize call failed.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -32,9 +36,7 @@ pub fn normalize(channel: &str, recipient: &str) -> Result<String, NormalizeErro
         "email" => Ok(recipient.trim().to_lowercase()),
         "sms" => {
             let r = recipient.trim();
-            // E.164: leading '+', country code 1-9, total 8-15 digits.
-            let re = regex::Regex::new(r"^\+[1-9]\d{1,14}$").expect("valid regex");
-            if re.is_match(r) {
+            if E164_RE.is_match(r) {
                 Ok(r.to_string())
             } else {
                 Err(NormalizeError::InvalidE164)

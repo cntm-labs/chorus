@@ -45,18 +45,25 @@ impl AccountRepository for MockAccountRepo {
 
 struct MockMessageRepo {
     messages: Mutex<Vec<Message>>,
+    delivery_events: Mutex<Vec<DeliveryEvent>>,
 }
 
 impl MockMessageRepo {
     fn new() -> Self {
         Self {
             messages: Mutex::new(Vec::new()),
+            delivery_events: Mutex::new(Vec::new()),
         }
     }
 
     /// Directly insert a pre-built message without going through the HTTP layer — test helper.
     fn seed(&self, msg: Message) {
         self.messages.lock().unwrap().push(msg);
+    }
+
+    /// Read a snapshot of all delivery events — test helper.
+    fn delivery_events_snapshot(&self) -> Vec<DeliveryEvent> {
+        self.delivery_events.lock().unwrap().clone()
     }
 }
 
@@ -112,26 +119,51 @@ impl MessageRepository for MockMessageRepo {
 
     async fn update_status(
         &self,
-        _id: Uuid,
-        _status: &str,
-        _provider: Option<&str>,
-        _provider_message_id: Option<&str>,
-        _error_message: Option<&str>,
+        id: Uuid,
+        status: &str,
+        provider: Option<&str>,
+        provider_message_id: Option<&str>,
+        error_message: Option<&str>,
     ) -> Result<(), DbError> {
+        let mut msgs = self.messages.lock().unwrap();
+        if let Some(m) = msgs.iter_mut().find(|m| m.id == id) {
+            m.status = status.to_string();
+            if let Some(p) = provider {
+                m.provider = Some(p.to_string());
+            }
+            if let Some(pmid) = provider_message_id {
+                m.provider_message_id = Some(pmid.to_string());
+            }
+            if let Some(err) = error_message {
+                m.error_message = Some(err.to_string());
+            }
+        }
         Ok(())
     }
 
     async fn insert_delivery_event(
         &self,
-        _message_id: Uuid,
-        _status: &str,
-        _provider_data: Option<serde_json::Value>,
+        message_id: Uuid,
+        status: &str,
+        provider_data: Option<serde_json::Value>,
     ) -> Result<(), DbError> {
+        self.delivery_events.lock().unwrap().push(DeliveryEvent {
+            id: Uuid::new_v4(),
+            message_id,
+            status: status.to_string(),
+            provider_data,
+            created_at: Utc::now(),
+        });
         Ok(())
     }
 
-    async fn get_delivery_events(&self, _message_id: Uuid) -> Result<Vec<DeliveryEvent>, DbError> {
-        Ok(vec![])
+    async fn get_delivery_events(&self, message_id: Uuid) -> Result<Vec<DeliveryEvent>, DbError> {
+        let events = self.delivery_events.lock().unwrap();
+        Ok(events
+            .iter()
+            .filter(|e| e.message_id == message_id)
+            .cloned()
+            .collect())
     }
 
     async fn find_by_provider_message_id(
@@ -1298,8 +1330,9 @@ async fn bounce_creates_suppression_and_marks_message_bounced() {
     let app = create_router(Arc::clone(&fx.state));
 
     // Seed a message row directly (bypassing HTTP/Redis so the test stays self-contained).
+    let seeded_id = Uuid::new_v4();
     fx.messages.seed(Message {
-        id: Uuid::new_v4(),
+        id: seeded_id,
         account_id: fx.account_id,
         api_key_id: Uuid::new_v4(),
         channel: "email".into(),
@@ -1343,6 +1376,27 @@ async fn bounce_creates_suppression_and_marks_message_bounced() {
     assert_eq!(snapshot[0].reason, "hard_bounce");
     assert_eq!(snapshot[0].source, "chorus-mail");
     assert_eq!(snapshot[0].account_id, fx.account_id);
+
+    // Verify message status flipped to "bounced".
+    let updated = fx
+        .messages
+        .find_by_id(seeded_id, fx.account_id)
+        .await
+        .unwrap()
+        .expect("seeded message should still exist");
+    assert_eq!(updated.status, "bounced");
+    assert_eq!(updated.error_message.as_deref(), Some("5.1.1 user unknown"));
+
+    // Verify a delivery_event row was appended with status="bounced".
+    let events = fx.messages.delivery_events_snapshot();
+    let bounced_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.message_id == seeded_id && e.status == "bounced")
+        .collect();
+    assert_eq!(bounced_events.len(), 1);
+    let provider_data = bounced_events[0].provider_data.as_ref().unwrap();
+    assert_eq!(provider_data["reason"], "5.1.1 user unknown");
+    assert_eq!(provider_data["source"], "chorus-mail");
 }
 
 #[tokio::test]
