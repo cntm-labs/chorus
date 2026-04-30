@@ -30,8 +30,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgres://chorus:chorus@postgres:5432/chorus
-      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL:-postgres://chorus:chorus@postgres:5432/chorus}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       HOST: 0.0.0.0
       PORT: "3000"
       WORKER_CONCURRENCY: "4"
