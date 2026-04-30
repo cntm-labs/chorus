@@ -291,6 +291,14 @@ pub struct NewSuppression {
     pub source: String,
 }
 
+/// Outcome of a suppression `add` call.
+pub struct AddSuppressionResult {
+    /// The canonical row (newly inserted or pre-existing).
+    pub entry: Suppression,
+    /// `true` if this call inserted the row; `false` if it already existed.
+    pub inserted: bool,
+}
+
 /// Suppression list management.
 #[async_trait]
 pub trait SuppressionRepository: Send + Sync {
@@ -302,8 +310,9 @@ pub trait SuppressionRepository: Send + Sync {
         recipient: &str,
     ) -> Result<Option<String>, DbError>;
 
-    /// Insert a suppression. Idempotent: existing rows are left untouched.
-    async fn add(&self, entry: &NewSuppression) -> Result<(), DbError>;
+    /// Insert a suppression idempotently. Returns the canonical row plus a flag
+    /// indicating whether this call performed the insert.
+    async fn add(&self, entry: &NewSuppression) -> Result<AddSuppressionResult, DbError>;
 
     /// Remove a suppression. Returns `true` if a row was deleted.
     async fn remove(

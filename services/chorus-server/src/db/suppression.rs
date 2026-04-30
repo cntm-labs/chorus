@@ -1,8 +1,11 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::{DbError, NewSuppression, Pagination, Suppression, SuppressionRepository};
+use super::{
+    AddSuppressionResult, DbError, NewSuppression, Pagination, Suppression, SuppressionRepository,
+};
 
 /// PostgreSQL-backed suppression repository.
 pub struct PgSuppressionRepository {
@@ -37,21 +40,37 @@ impl SuppressionRepository for PgSuppressionRepository {
         Ok(row.map(|(r,)| r))
     }
 
-    async fn add(&self, entry: &NewSuppression) -> Result<(), DbError> {
-        sqlx::query(
+    async fn add(&self, entry: &NewSuppression) -> Result<AddSuppressionResult, DbError> {
+        // Upsert with no-op conflict update so RETURNING * always yields a row.
+        // `xmax = 0` is a Postgres idiom: zero on a freshly inserted row,
+        // non-zero on an updated/conflicted row — distinguishes insert vs hit.
+        let row: (Uuid, String, String, String, String, DateTime<Utc>, bool) = sqlx::query_as(
             "INSERT INTO suppressions (account_id, channel, recipient, reason, source)
              VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (account_id, channel, recipient) DO NOTHING",
+             ON CONFLICT (account_id, channel, recipient)
+             DO UPDATE SET account_id = EXCLUDED.account_id
+             RETURNING account_id, channel, recipient, reason, source, created_at, (xmax = 0) AS inserted",
         )
         .bind(entry.account_id)
         .bind(&entry.channel)
         .bind(&entry.recipient)
         .bind(&entry.reason)
         .bind(&entry.source)
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await
         .map_err(|e| DbError::Internal(e.into()))?;
-        Ok(())
+
+        Ok(AddSuppressionResult {
+            entry: Suppression {
+                account_id: row.0,
+                channel: row.1,
+                recipient: row.2,
+                reason: row.3,
+                source: row.4,
+                created_at: row.5,
+            },
+            inserted: row.6,
+        })
     }
 
     async fn remove(
