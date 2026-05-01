@@ -156,3 +156,217 @@ impl IdempotencyRepository for PgIdempotencyRepository {
         Ok(result.rows_affected())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::IdempotencyOutcome;
+    use sqlx::PgPool;
+
+    /// Seed an account + api_key row so FK on idempotency_keys is satisfied.
+    async fn seed_api_key(pool: &PgPool) -> Uuid {
+        let account_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO accounts (id, name, owner_email, is_active)
+             VALUES ($1, 'test', 'test@example.com', true)",
+        )
+        .bind(account_id)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let key_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO api_keys (id, account_id, name, key_hash, key_prefix, environment)
+             VALUES ($1, $2, 'k', $3, 'ch_test_xx', 'test')",
+        )
+        .bind(key_id)
+        .bind(account_id)
+        .bind(format!("hash-{key_id}"))
+        .execute(pool)
+        .await
+        .unwrap();
+
+        key_id
+    }
+
+    fn h(byte: u8) -> [u8; 32] {
+        [byte; 32]
+    }
+
+    #[sqlx::test(migrations = "./src/db/migrations")]
+    async fn first_begin_returns_fresh(pool: PgPool) {
+        let key_id = seed_api_key(&pool).await;
+        let repo = PgIdempotencyRepository::new(pool);
+
+        let outcome = repo
+            .begin(key_id, "abc", &h(1), "POST", "/v1/sms/send")
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, IdempotencyOutcome::Fresh));
+    }
+
+    #[sqlx::test(migrations = "./src/db/migrations")]
+    async fn replay_after_complete_returns_cached_response(pool: PgPool) {
+        let key_id = seed_api_key(&pool).await;
+        let repo = PgIdempotencyRepository::new(pool);
+
+        repo.begin(key_id, "abc", &h(1), "POST", "/v1/sms/send")
+            .await
+            .unwrap();
+        repo.complete(key_id, "abc", 202, b"{\"message_id\":\"x\"}")
+            .await
+            .unwrap();
+
+        let outcome = repo
+            .begin(key_id, "abc", &h(1), "POST", "/v1/sms/send")
+            .await
+            .unwrap();
+        match outcome {
+            IdempotencyOutcome::Replay { status, body } => {
+                assert_eq!(status, 202);
+                assert_eq!(body, b"{\"message_id\":\"x\"}");
+            }
+            o => panic!("expected Replay, got {o:?}"),
+        }
+    }
+
+    #[sqlx::test(migrations = "./src/db/migrations")]
+    async fn different_hash_returns_hash_mismatch(pool: PgPool) {
+        let key_id = seed_api_key(&pool).await;
+        let repo = PgIdempotencyRepository::new(pool);
+
+        repo.begin(key_id, "abc", &h(1), "POST", "/v1/sms/send")
+            .await
+            .unwrap();
+        repo.complete(key_id, "abc", 202, b"ok").await.unwrap();
+
+        let outcome = repo
+            .begin(key_id, "abc", &h(2), "POST", "/v1/sms/send")
+            .await
+            .unwrap();
+        assert!(matches!(outcome, IdempotencyOutcome::HashMismatch));
+    }
+
+    #[sqlx::test(migrations = "./src/db/migrations")]
+    async fn stale_in_progress_row_recovers_to_fresh(pool: PgPool) {
+        let key_id = seed_api_key(&pool).await;
+        let repo = PgIdempotencyRepository::new(pool.clone());
+
+        repo.begin(key_id, "abc", &h(1), "POST", "/v1/sms/send")
+            .await
+            .unwrap();
+
+        // Backdate created_at by 90s to simulate a crashed holder.
+        sqlx::query(
+            "UPDATE idempotency_keys
+             SET created_at = now() - interval '90 seconds'
+             WHERE api_key_id = $1 AND idempotency_key = $2",
+        )
+        .bind(key_id)
+        .bind("abc")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let outcome = repo
+            .begin(key_id, "abc", &h(2), "POST", "/v1/sms/send")
+            .await
+            .unwrap();
+        assert!(matches!(outcome, IdempotencyOutcome::Fresh));
+    }
+
+    #[sqlx::test(migrations = "./src/db/migrations")]
+    async fn delete_expired_removes_only_expired_rows(pool: PgPool) {
+        let key_id = seed_api_key(&pool).await;
+        let repo = PgIdempotencyRepository::new(pool.clone());
+
+        for k in ["e1", "e2", "e3"] {
+            repo.begin(key_id, k, &h(1), "POST", "/v1/sms/send")
+                .await
+                .unwrap();
+            sqlx::query(
+                "UPDATE idempotency_keys SET expires_at = now() - interval '1 second'
+                 WHERE api_key_id=$1 AND idempotency_key=$2",
+            )
+            .bind(key_id)
+            .bind(k)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        for k in ["f1", "f2"] {
+            repo.begin(key_id, k, &h(1), "POST", "/v1/sms/send")
+                .await
+                .unwrap();
+        }
+
+        let deleted = repo.delete_expired(100).await.unwrap();
+        assert_eq!(deleted, 3);
+
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM idempotency_keys WHERE api_key_id = $1")
+                .bind(key_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(remaining, 2);
+    }
+
+    #[sqlx::test(migrations = "./src/db/migrations")]
+    async fn delete_expired_respects_limit(pool: PgPool) {
+        let key_id = seed_api_key(&pool).await;
+        let repo = PgIdempotencyRepository::new(pool.clone());
+
+        for i in 0..5 {
+            let k = format!("k{i}");
+            repo.begin(key_id, &k, &h(1), "POST", "/v1/sms/send")
+                .await
+                .unwrap();
+            sqlx::query(
+                "UPDATE idempotency_keys SET expires_at = now() - interval '1 second'
+                 WHERE api_key_id=$1 AND idempotency_key=$2",
+            )
+            .bind(key_id)
+            .bind(&k)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let deleted = repo.delete_expired(2).await.unwrap();
+        assert_eq!(deleted, 2);
+
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM idempotency_keys WHERE api_key_id = $1")
+                .bind(key_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(remaining, 3);
+    }
+
+    #[sqlx::test(migrations = "./src/db/migrations")]
+    async fn cascade_delete_on_api_key_removal(pool: PgPool) {
+        let key_id = seed_api_key(&pool).await;
+        let repo = PgIdempotencyRepository::new(pool.clone());
+
+        repo.begin(key_id, "abc", &h(1), "POST", "/v1/sms/send")
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM api_keys WHERE id = $1")
+            .bind(key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM idempotency_keys WHERE api_key_id = $1")
+                .bind(key_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+    }
+}
