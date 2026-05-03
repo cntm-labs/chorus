@@ -13,14 +13,44 @@ use chorus_server::app::{create_router, AppState};
 use chorus_server::config::Config;
 use chorus_server::db::{
     Account, AccountRepository, AddSuppressionResult, ApiKey, ApiKeyRepository, DbError,
-    DeliveryEvent, Message, MessageRepository, NewMessage, NewProviderConfig, NewSuppression,
-    NewWebhook, Pagination, ProviderConfig, ProviderConfigRepository, Suppression,
-    SuppressionRepository, Webhook, WebhookRepository,
+    DeliveryEvent, IdempotencyOutcome, IdempotencyRepository, Message, MessageRepository,
+    NewMessage, NewProviderConfig, NewSuppression, NewWebhook, Pagination, ProviderConfig,
+    ProviderConfigRepository, Suppression, SuppressionRepository, Webhook, WebhookRepository,
 };
 
 // ---------------------------------------------------------------------------
 // Mock repositories
 // ---------------------------------------------------------------------------
+
+/// No-op idempotency repo: returns Fresh for every call so existing tests
+/// behave as if the header was absent. Used by the default test fixture.
+struct NullIdempotencyRepo;
+
+#[async_trait]
+impl IdempotencyRepository for NullIdempotencyRepo {
+    async fn begin(
+        &self,
+        _api_key_id: Uuid,
+        _key: &str,
+        _request_hash: &[u8; 32],
+        _method: &str,
+        _path: &str,
+    ) -> Result<IdempotencyOutcome, DbError> {
+        Ok(IdempotencyOutcome::Fresh)
+    }
+    async fn complete(
+        &self,
+        _api_key_id: Uuid,
+        _key: &str,
+        _response_status: u16,
+        _response_body: &[u8],
+    ) -> Result<(), DbError> {
+        Ok(())
+    }
+    async fn delete_expired(&self, _limit: i64) -> Result<u64, DbError> {
+        Ok(0)
+    }
+}
 
 struct MockAccountRepo {
     account: Account,
@@ -423,6 +453,8 @@ fn test_fixture() -> TestFixture {
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
     let config = Arc::new(Config::from_env());
 
+    let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(NullIdempotencyRepo);
+
     let state = Arc::new(AppState::with_repos(
         redis,
         config,
@@ -432,6 +464,7 @@ fn test_fixture() -> TestFixture {
         provider_config_repo,
         webhook_repo,
         suppressions.clone(),
+        idempotency_repo,
     ));
 
     TestFixture {
