@@ -6,6 +6,7 @@
 use axum::body::Bytes;
 use axum::http::{HeaderMap, Method, StatusCode};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::app::AppState;
@@ -99,7 +100,7 @@ pub fn internal_error_response(msg: &str) -> (StatusCode, Bytes) {
 
 /// Inspect the `Idempotency-Key` header and decide what the route should do.
 pub async fn begin(
-    state: &AppState,
+    state: &Arc<AppState>,
     api_key_id: Uuid,
     headers: &HeaderMap,
     method: &Method,
@@ -156,7 +157,7 @@ pub async fn begin(
 /// downstream side effect (message insert + enqueue) has already happened,
 /// and the client's response should be returned regardless.
 pub async fn finalize(
-    state: &AppState,
+    state: &Arc<AppState>,
     token: IdempotencyToken,
     status: StatusCode,
     body: &[u8],
