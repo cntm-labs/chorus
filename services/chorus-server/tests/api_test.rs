@@ -2105,3 +2105,174 @@ async fn sms_batch_with_idempotency_key_replays_full_partition() {
 
     assert_eq!(bytes1, bytes2, "batch replay must be byte-for-byte identical");
 }
+
+// ----- C1 cross-API-key isolation -----
+
+const TEST_API_KEY_A: &str =
+    "ch_test_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const TEST_API_KEY_B: &str =
+    "ch_test_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+struct MockMultiKeyAccountRepo {
+    account: Account,
+    keys: std::collections::HashMap<String, ApiKey>,
+}
+
+#[async_trait]
+impl AccountRepository for MockMultiKeyAccountRepo {
+    async fn find_by_api_key_hash(
+        &self,
+        hash: &str,
+    ) -> Result<Option<(Account, ApiKey)>, DbError> {
+        Ok(self
+            .keys
+            .get(hash)
+            .map(|k| (self.account.clone(), k.clone())))
+    }
+
+    async fn update_key_last_used(&self, _key_id: Uuid) -> Result<(), DbError> {
+        Ok(())
+    }
+}
+
+fn fixture_two_api_keys() -> Arc<AppState> {
+    let account_id = Uuid::new_v4();
+    let account = Account {
+        id: account_id,
+        name: "Test Account".into(),
+        owner_email: "test@example.com".into(),
+        is_active: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+
+    let mut keys = std::collections::HashMap::new();
+    keys.insert(
+        hex::encode(Sha256::digest(TEST_API_KEY_A.as_bytes())),
+        ApiKey {
+            id: Uuid::new_v4(),
+            account_id,
+            name: "key A".into(),
+            key_prefix: "ch_test_aa...".into(),
+            environment: "test".into(),
+            last_used_at: None,
+            expires_at: None,
+            is_revoked: false,
+            created_at: Utc::now(),
+        },
+    );
+    keys.insert(
+        hex::encode(Sha256::digest(TEST_API_KEY_B.as_bytes())),
+        ApiKey {
+            id: Uuid::new_v4(),
+            account_id,
+            name: "key B".into(),
+            key_prefix: "ch_test_bb...".into(),
+            environment: "test".into(),
+            last_used_at: None,
+            expires_at: None,
+            is_revoked: false,
+            created_at: Utc::now(),
+        },
+    );
+
+    let account_repo = Arc::new(MockMultiKeyAccountRepo { account, keys });
+    let messages = Arc::new(MockMessageRepo::new());
+    let suppressions = Arc::new(MockSuppressionRepo::new());
+    let api_key_repo = Arc::new(MockApiKeyRepo);
+    let provider_config_repo = Arc::new(MockProviderConfigRepo);
+    let webhook_repo = Arc::new(MockWebhookRepo);
+    let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
+
+    let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+    let config = Arc::new(Config::from_env());
+
+    Arc::new(AppState::with_repos(
+        redis,
+        config,
+        account_repo,
+        messages,
+        api_key_repo,
+        provider_config_repo,
+        webhook_repo,
+        suppressions,
+        idempotency_repo,
+    ))
+}
+
+#[tokio::test]
+async fn idempotency_is_isolated_by_api_key() {
+    // The same Idempotency-Key value sent under two different API keys must
+    // NOT collide — so reusing the value with a different body under api_key
+    // B must succeed (422 suppression), not return 422 idempotency_key_reused.
+    let state = fixture_two_api_keys();
+    let app = create_router(state);
+
+    // Seed suppression via key A — it doesn't matter which key seeds, the
+    // suppression list is per-account.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY_A}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"sms","recipient":"+66812345678"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(resp.status().is_success() || resp.status() == StatusCode::CONFLICT);
+
+    let key = "shared-idem-key";
+
+    // Call 1 — API key A, body=A
+    let resp_a = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY_A}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::json!({"to":"+66812345678","body":"A"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp_a.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let v_a = response_body(resp_a).await;
+    assert_eq!(v_a["error"]["code"], "recipient_suppressed");
+
+    // Call 2 — API key B, body=B (would collide with A under shared scope)
+    let resp_b = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY_B}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::json!({"to":"+66812345678","body":"B"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp_b.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let v_b = response_body(resp_b).await;
+    // If isolation works, B sees its own fresh slot → suppression check
+    // fires → recipient_suppressed. If broken, it would be idempotency_key_reused.
+    assert_eq!(
+        v_b["error"]["code"], "recipient_suppressed",
+        "same Idempotency-Key under a different api_key must not collide"
+    );
+}
