@@ -1933,3 +1933,74 @@ async fn sms_send_without_idempotency_key_keeps_existing_behavior() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+/// Seed an email suppression so /v1/email/send hits the 422 short-circuit.
+async fn seed_email_suppression(app: &axum::Router, recipient: &str) {
+    let body = serde_json::json!({"channel":"email","recipient":recipient}).to_string();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(resp.status().is_success() || resp.status() == StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn email_send_with_idempotency_key_caches_and_replays() {
+    let (state, msg_repo) = fixture_with_mem_idempotency();
+    let app = create_router(state);
+    seed_email_suppression(&app, "alice@example.com").await;
+
+    let body = serde_json::json!({
+        "to":"alice@example.com",
+        "subject":"hello",
+        "body":"hi"
+    })
+    .to_string();
+    let key = "email-key-1";
+
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/email/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes1 = resp1.into_body().collect().await.unwrap().to_bytes();
+
+    let resp2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/email/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(bytes1, bytes2);
+    assert_eq!(msg_repo.messages.lock().unwrap().len(), 0);
+}

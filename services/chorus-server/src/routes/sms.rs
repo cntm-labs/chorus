@@ -1,7 +1,7 @@
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, Method, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::auth::api_key::AccountContext;
 use crate::db::NewMessage;
-use crate::idempotency::{self, IdempotencyAction, IdempotencyToken};
+use crate::idempotency::{self, IdempotencyAction};
 use crate::queue::SendJob;
 
 const ROUTE_PATH: &str = "/v1/sms/send";
@@ -57,12 +57,17 @@ pub async fn send_sms(
         IdempotencyAction::Respond {
             status,
             body: resp_body,
-        } => return (status, resp_body).into_response(),
+        } => {
+            return idempotency::finalize_and_respond(&state, None, status, resp_body).await;
+        }
     };
 
     let req: SendSmsRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
-        Err(e) => return finalize_and_respond(&state, token, error_400(e.to_string())).await,
+        Err(e) => {
+            let (status, body) = idempotency::bad_request(e.to_string());
+            return idempotency::finalize_and_respond(&state, token, status, body).await;
+        }
     };
 
     if let Err(rej) =
@@ -70,7 +75,7 @@ pub async fn send_sms(
     {
         let (status, body) = crate::suppression::rejection_response(rej);
         let bytes = Bytes::from(serde_json::to_vec(&body.0).unwrap_or_default());
-        return finalize_and_respond(&state, token, (status, bytes)).await;
+        return idempotency::finalize_and_respond(&state, token, status, bytes).await;
     }
 
     let new_msg = NewMessage {
@@ -85,7 +90,10 @@ pub async fn send_sms(
     };
     let message = match state.message_repo().insert(&new_msg).await {
         Ok(m) => m,
-        Err(e) => return finalize_and_respond(&state, token, error_500(e.to_string())).await,
+        Err(e) => {
+            let (status, body) = idempotency::internal_error(e.to_string());
+            return idempotency::finalize_and_respond(&state, token, status, body).await;
+        }
     };
 
     let job = SendJob {
@@ -96,7 +104,8 @@ pub async fn send_sms(
         attempt: 0,
     };
     if let Err(e) = crate::queue::enqueue::notify(&state, &job).await {
-        return finalize_and_respond(&state, token, error_500(e.to_string())).await;
+        let (status, body) = idempotency::internal_error(e.to_string());
+        return idempotency::finalize_and_respond(&state, token, status, body).await;
     }
 
     let response = SendResponse {
@@ -104,41 +113,5 @@ pub async fn send_sms(
         status: "queued",
     };
     let response_bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_default());
-    finalize_and_respond(&state, token, (StatusCode::ACCEPTED, response_bytes)).await
-}
-
-/// Cache the response (if a token is held) and turn it into an axum Response.
-async fn finalize_and_respond(
-    state: &Arc<AppState>,
-    token: Option<IdempotencyToken>,
-    (status, body): (StatusCode, Bytes),
-) -> Response {
-    if let Some(t) = token {
-        idempotency::finalize(state, t, status, &body).await;
-    }
-    (status, body).into_response()
-}
-
-fn error_400(msg: String) -> (StatusCode, Bytes) {
-    (
-        StatusCode::BAD_REQUEST,
-        Bytes::from(
-            serde_json::to_vec(
-                &serde_json::json!({ "error": { "code": "bad_request", "message": msg } }),
-            )
-            .unwrap_or_default(),
-        ),
-    )
-}
-
-fn error_500(msg: String) -> (StatusCode, Bytes) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Bytes::from(
-            serde_json::to_vec(
-                &serde_json::json!({ "error": { "code": "internal", "message": msg } }),
-            )
-            .unwrap_or_default(),
-        ),
-    )
+    idempotency::finalize_and_respond(&state, token, StatusCode::ACCEPTED, response_bytes).await
 }

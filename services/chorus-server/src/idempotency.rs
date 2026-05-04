@@ -5,6 +5,7 @@
 
 use axum::body::Bytes;
 use axum::http::{HeaderMap, Method, StatusCode};
+use axum::response::{IntoResponse, Response};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -149,6 +150,38 @@ pub async fn begin(
             IdempotencyAction::Respond { status, body }
         }
     }
+}
+
+/// Cache the response (if a token is held) and turn it into an axum [`Response`].
+///
+/// Used by route handlers to combine `finalize` and response construction
+/// at every exit path.
+pub async fn finalize_and_respond(
+    state: &Arc<AppState>,
+    token: Option<IdempotencyToken>,
+    status: StatusCode,
+    body: Bytes,
+) -> Response {
+    if let Some(t) = token {
+        finalize(state, t, status, &body).await;
+    }
+    (status, body).into_response()
+}
+
+/// Build a 400 Bad Request response carrying a JSON `error` envelope.
+pub fn bad_request(message: impl Into<String>) -> (StatusCode, Bytes) {
+    (
+        StatusCode::BAD_REQUEST,
+        error_body("bad_request", &message.into()),
+    )
+}
+
+/// Build a 500 Internal Server Error response carrying a JSON `error` envelope.
+pub fn internal_error(message: impl Into<String>) -> (StatusCode, Bytes) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        error_body("internal", &message.into()),
+    )
 }
 
 /// Persist the response so future retries with the same key replay it.
