@@ -212,6 +212,26 @@ pub async fn finalize(
     }
 }
 
+/// Periodically delete expired idempotency rows.
+///
+/// Runs every 5 minutes; deletes up to 10 000 expired rows per tick to bound
+/// lock contention. Logs at info on success, warn on error.
+pub async fn cleanup_loop(state: Arc<AppState>) {
+    const TICK: std::time::Duration = std::time::Duration::from_secs(300);
+    const BATCH: i64 = 10_000;
+
+    let mut interval = tokio::time::interval(TICK);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        interval.tick().await;
+        match state.idempotency_repo().delete_expired(BATCH).await {
+            Ok(n) if n > 0 => tracing::info!(deleted = n, "idempotency cleanup"),
+            Ok(_) => tracing::debug!("idempotency cleanup: nothing to delete"),
+            Err(e) => tracing::warn!(error = %e, "idempotency cleanup failed"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -194,6 +194,7 @@ mod tests {
         [byte; 32]
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./src/db/migrations")]
     async fn first_begin_returns_fresh(pool: PgPool) {
         let key_id = seed_api_key(&pool).await;
@@ -207,6 +208,7 @@ mod tests {
         assert!(matches!(outcome, IdempotencyOutcome::Fresh));
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./src/db/migrations")]
     async fn replay_after_complete_returns_cached_response(pool: PgPool) {
         let key_id = seed_api_key(&pool).await;
@@ -232,6 +234,7 @@ mod tests {
         }
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./src/db/migrations")]
     async fn different_hash_returns_hash_mismatch(pool: PgPool) {
         let key_id = seed_api_key(&pool).await;
@@ -249,6 +252,7 @@ mod tests {
         assert!(matches!(outcome, IdempotencyOutcome::HashMismatch));
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./src/db/migrations")]
     async fn stale_in_progress_row_recovers_to_fresh(pool: PgPool) {
         let key_id = seed_api_key(&pool).await;
@@ -277,6 +281,7 @@ mod tests {
         assert!(matches!(outcome, IdempotencyOutcome::Fresh));
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./src/db/migrations")]
     async fn delete_expired_removes_only_expired_rows(pool: PgPool) {
         let key_id = seed_api_key(&pool).await;
@@ -314,6 +319,7 @@ mod tests {
         assert_eq!(remaining, 2);
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./src/db/migrations")]
     async fn delete_expired_respects_limit(pool: PgPool) {
         let key_id = seed_api_key(&pool).await;
@@ -347,6 +353,7 @@ mod tests {
         assert_eq!(remaining, 3);
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./src/db/migrations")]
     async fn cascade_delete_on_api_key_removal(pool: PgPool) {
         let key_id = seed_api_key(&pool).await;
