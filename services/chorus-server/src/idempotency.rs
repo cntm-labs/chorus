@@ -8,10 +8,20 @@ use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use std::time::Instant;
 use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::db::{DbError, IdempotencyOutcome};
+
+/// Prometheus metric name for outcome counters (labeled by `outcome`).
+const METRIC_OUTCOMES: &str = "chorus_idempotency_outcomes_total";
+/// Prometheus metric name for the lookup-duration histogram.
+const METRIC_LOOKUP_DURATION: &str = "chorus_idempotency_lookup_duration_seconds";
+
+fn record_outcome(outcome: &'static str) {
+    metrics::counter!(METRIC_OUTCOMES, "outcome" => outcome).increment(1);
+}
 
 /// HTTP header name used to carry the idempotency key.
 pub const HEADER_NAME: &str = "Idempotency-Key";
@@ -109,42 +119,57 @@ pub async fn begin(
     body_bytes: &[u8],
 ) -> IdempotencyAction {
     let Some(raw) = headers.get(HEADER_NAME) else {
+        record_outcome("skip");
         return IdempotencyAction::Skip;
     };
     let Ok(key) = raw.to_str() else {
+        record_outcome("invalid_key");
         let (status, body) = invalid_key_response();
         return IdempotencyAction::Respond { status, body };
     };
     if !is_valid_key(key) {
+        record_outcome("invalid_key");
         let (status, body) = invalid_key_response();
         return IdempotencyAction::Respond { status, body };
     }
 
     let hash = sha256(body_bytes);
-    match state
+    let start = Instant::now();
+    let result = state
         .idempotency_repo()
         .begin(api_key_id, key, &hash, method.as_str(), path)
-        .await
-    {
-        Ok(IdempotencyOutcome::Fresh) => IdempotencyAction::Proceed {
-            token: IdempotencyToken {
-                api_key_id,
-                key: key.to_string(),
-            },
-        },
-        Ok(IdempotencyOutcome::Replay { status, body }) => IdempotencyAction::Respond {
-            status: StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
-            body: Bytes::from(body),
-        },
+        .await;
+    metrics::histogram!(METRIC_LOOKUP_DURATION).record(start.elapsed().as_secs_f64());
+
+    match result {
+        Ok(IdempotencyOutcome::Fresh) => {
+            record_outcome("fresh");
+            IdempotencyAction::Proceed {
+                token: IdempotencyToken {
+                    api_key_id,
+                    key: key.to_string(),
+                },
+            }
+        }
+        Ok(IdempotencyOutcome::Replay { status, body }) => {
+            record_outcome("replay");
+            IdempotencyAction::Respond {
+                status: StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
+                body: Bytes::from(body),
+            }
+        }
         Ok(IdempotencyOutcome::HashMismatch) => {
+            record_outcome("hash_mismatch");
             let (status, body) = hash_mismatch_response();
             IdempotencyAction::Respond { status, body }
         }
         Err(DbError::Timeout) => {
+            record_outcome("timeout");
             let (status, body) = concurrent_request_response();
             IdempotencyAction::Respond { status, body }
         }
         Err(e) => {
+            record_outcome("error");
             tracing::error!(error = %e, "idempotency begin failed");
             let (status, body) = internal_error_response("idempotency lookup failed");
             IdempotencyAction::Respond { status, body }
