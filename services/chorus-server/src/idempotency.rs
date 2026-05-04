@@ -60,9 +60,7 @@ pub fn sha256(body: &[u8]) -> [u8; 32] {
 /// Returns true if `s` is a valid idempotency key:
 /// non-empty, ≤255 chars, ASCII printable (graphic + space).
 pub fn is_valid_key(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 255
-        && s.chars().all(|c| c.is_ascii_graphic() || c == ' ')
+    !s.is_empty() && s.len() <= 255 && s.chars().all(|c| c.is_ascii_graphic() || c == ' ')
 }
 
 /// Build the JSON body for an idempotency error response.
@@ -106,7 +104,10 @@ pub fn concurrent_request_response() -> (StatusCode, Bytes) {
 
 /// 500 response used for unexpected DB errors.
 pub fn internal_error_response(msg: &str) -> (StatusCode, Bytes) {
-    (StatusCode::INTERNAL_SERVER_ERROR, error_body("internal", msg))
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        error_body("internal", msg),
+    )
 }
 
 /// Inspect the `Idempotency-Key` header and decide what the route should do.

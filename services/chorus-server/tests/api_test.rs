@@ -1648,10 +1648,7 @@ impl IdempotencyRepository for MemIdempotencyRepo {
         let k = (api_key_id, key.to_string());
         match rows.get(&k) {
             None => {
-                rows.insert(
-                    k,
-                    (request_hash.to_vec(), "in_progress".into(), None, None),
-                );
+                rows.insert(k, (request_hash.to_vec(), "in_progress".into(), None, None));
                 Ok(IdempotencyOutcome::Fresh)
             }
             Some((existing_hash, status, response_status, response_body)) => {
@@ -2103,7 +2100,10 @@ async fn sms_batch_with_idempotency_key_replays_full_partition() {
     assert_eq!(resp2.status(), StatusCode::MULTI_STATUS);
     let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
 
-    assert_eq!(bytes1, bytes2, "batch replay must be byte-for-byte identical");
+    assert_eq!(
+        bytes1, bytes2,
+        "batch replay must be byte-for-byte identical"
+    );
 }
 
 // ----- C1 cross-API-key isolation -----
@@ -2120,10 +2120,7 @@ struct MockMultiKeyAccountRepo {
 
 #[async_trait]
 impl AccountRepository for MockMultiKeyAccountRepo {
-    async fn find_by_api_key_hash(
-        &self,
-        hash: &str,
-    ) -> Result<Option<(Account, ApiKey)>, DbError> {
+    async fn find_by_api_key_hash(&self, hash: &str) -> Result<Option<(Account, ApiKey)>, DbError> {
         Ok(self
             .keys
             .get(hash)
