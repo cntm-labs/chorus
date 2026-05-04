@@ -2004,3 +2004,50 @@ async fn email_send_with_idempotency_key_caches_and_replays() {
     assert_eq!(bytes1, bytes2);
     assert_eq!(msg_repo.messages.lock().unwrap().len(), 0);
 }
+
+#[tokio::test]
+async fn otp_send_with_idempotency_key_replays() {
+    // Use suppressed recipient so we don't need Redis for otp::store.
+    let (state, _msg_repo) = fixture_with_mem_idempotency();
+    let app = create_router(state);
+    seed_sms_suppression(&app, "+66812345678").await;
+
+    let body = serde_json::json!({"to":"+66812345678"}).to_string();
+    let key = "otp-key-1";
+
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/otp/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes1 = resp1.into_body().collect().await.unwrap().to_bytes();
+
+    let resp2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/otp/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(bytes1, bytes2, "OTP replay must be byte-for-byte identical");
+}
