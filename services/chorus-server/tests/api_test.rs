@@ -2051,3 +2051,57 @@ async fn otp_send_with_idempotency_key_replays() {
 
     assert_eq!(bytes1, bytes2, "OTP replay must be byte-for-byte identical");
 }
+
+#[tokio::test]
+async fn sms_batch_with_idempotency_key_replays_full_partition() {
+    let (state, _msg_repo) = fixture_with_mem_idempotency();
+    let app = create_router(state);
+    seed_sms_suppression(&app, "+66811111111").await;
+    seed_sms_suppression(&app, "+66822222222").await;
+
+    let body = serde_json::json!({
+        "from": null,
+        "recipients": [
+            {"to":"+66811111111","body":"a"},
+            {"to":"+66822222222","body":"b"}
+        ]
+    })
+    .to_string();
+    let key = "batch-key-1";
+
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send-batch")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::MULTI_STATUS);
+    let bytes1 = resp1.into_body().collect().await.unwrap().to_bytes();
+
+    let resp2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send-batch")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::MULTI_STATUS);
+    let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(bytes1, bytes2, "batch replay must be byte-for-byte identical");
+}
