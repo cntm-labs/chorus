@@ -4,9 +4,19 @@ all-features = true
 [advisories]
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-# rand 0.8 unsoundness with custom logger — pinned by sqlx-postgres 0.8,
-# not upgradable until sqlx releases with rand 0.9+. We don't use custom loggers.
-ignore = ["RUSTSEC-2026-0097"]
+ignore = [
+    # rand 0.8 unsoundness with custom logger — pinned by sqlx-postgres 0.8,
+    # not upgradable until sqlx releases with rand 0.9+. We don't use custom loggers.
+    "RUSTSEC-2026-0097",
+    # hickory-proto NSEC3 unbounded loop on cross-zone DNS responses.
+    # Pulled in transitively via hickory-resolver. No fixed upgrade available.
+    # We use hickory only for DNS health checks, never for cross-zone resolution.
+    "RUSTSEC-2026-0118",
+    # hickory-proto O(n²) name compression CPU exhaustion during message encoding.
+    # Pulled in transitively via hickory-resolver. No fixed upgrade available.
+    # We do not encode arbitrary attacker-controlled DNS messages.
+    "RUSTSEC-2026-0119",
+]
 
 [licenses]
 private = { ignore = true }

@@ -1,5 +1,7 @@
+use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, Method, StatusCode};
+use axum::response::Response;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -7,6 +9,9 @@ use uuid::Uuid;
 
 use crate::app::AppState;
 use crate::auth::api_key::AccountContext;
+use crate::idempotency::{self, IdempotencyAction};
+
+const ROUTE_PATH: &str = "/v1/otp/send";
 
 /// OTP send request body.
 #[derive(Deserialize)]
@@ -39,69 +44,98 @@ pub struct VerifyOtpResponse {
 }
 
 /// Send a one-time password to the recipient.
+///
+/// Honors the `Idempotency-Key` header. Note that OTP also has a built-in
+/// per-recipient dedupe at the Redis layer; idempotency adds replay-safe
+/// retry semantics on top.
 pub async fn send_otp(
     State(state): State<Arc<AppState>>,
-    _ctx: AccountContext,
-    Json(req): Json<SendOtpRequest>,
-) -> Result<(StatusCode, Json<SendOtpResponse>), (StatusCode, axum::Json<serde_json::Value>)> {
-    let channel = if req.to.contains('@') { "email" } else { "sms" };
+    ctx: AccountContext,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let token = match idempotency::begin(
+        &state,
+        ctx.key_id,
+        &headers,
+        &Method::POST,
+        ROUTE_PATH,
+        &body,
+    )
+    .await
+    {
+        IdempotencyAction::Skip => None,
+        IdempotencyAction::Proceed { token } => Some(token),
+        IdempotencyAction::Respond {
+            status,
+            body: resp_body,
+        } => return idempotency::finalize_and_respond(&state, None, status, resp_body).await,
+    };
 
+    let req: SendOtpRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            let (status, body) = idempotency::bad_request(e.to_string());
+            return idempotency::finalize_and_respond(&state, token, status, body).await;
+        }
+    };
+
+    let channel = if req.to.contains('@') { "email" } else { "sms" };
     let code = crate::otp::generate_code();
 
-    if let Err(e) =
-        crate::suppression::check_suppression(&state, _ctx.account_id, channel, &req.to).await
+    if let Err(rej) =
+        crate::suppression::check_suppression(&state, ctx.account_id, channel, &req.to).await
     {
-        return Err(crate::suppression::rejection_response(e));
+        let (status, body) = crate::suppression::rejection_response(rej);
+        let bytes = Bytes::from(serde_json::to_vec(&body.0).unwrap_or_default());
+        return idempotency::finalize_and_respond(&state, token, status, bytes).await;
     }
 
-    let otp_id = crate::otp::store(&state.redis, &req.to, &code)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
-            )
-        })?;
+    let otp_id = match crate::otp::store(&state.redis, &req.to, &code).await {
+        Ok(id) => id,
+        Err(e) => {
+            let (status, body) = idempotency::internal_error(e.to_string());
+            return idempotency::finalize_and_respond(&state, token, status, body).await;
+        }
+    };
 
     let app_name = req.app_name.as_deref().unwrap_or("Chorus");
-    let body = format!("Your {app_name} verification code is: {code}");
+    let message_body = format!("Your {app_name} verification code is: {code}");
 
-    // Queue the OTP message for delivery
     let new_msg = crate::db::NewMessage {
-        account_id: _ctx.account_id,
-        api_key_id: _ctx.key_id,
+        account_id: ctx.account_id,
+        api_key_id: ctx.key_id,
         channel: channel.into(),
         sender: None,
         recipient: req.to,
         subject: Some(format!("{app_name} verification code")),
-        body,
-        environment: _ctx.environment.clone(),
+        body: message_body,
+        environment: ctx.environment.clone(),
     };
 
-    let message = state.message_repo().insert(&new_msg).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
-        )
-    })?;
+    let message = match state.message_repo().insert(&new_msg).await {
+        Ok(m) => m,
+        Err(e) => {
+            let (status, body) = idempotency::internal_error(e.to_string());
+            return idempotency::finalize_and_respond(&state, token, status, body).await;
+        }
+    };
 
     let job = crate::queue::SendJob {
         message_id: message.id,
         account_id: message.account_id,
         channel: message.channel.clone(),
-        environment: _ctx.environment,
+        environment: ctx.environment,
         attempt: 0,
     };
-    crate::queue::enqueue::notify(&state, &job)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(serde_json::json!({ "error": { "message": e.to_string() } })),
-            )
-        })?;
+    if let Err(e) = crate::queue::enqueue::notify(&state, &job).await {
+        let (status, body) = idempotency::internal_error(e.to_string());
+        return idempotency::finalize_and_respond(&state, token, status, body).await;
+    }
 
-    Ok((StatusCode::CREATED, Json(SendOtpResponse { otp_id })))
+    let response = SendOtpResponse { otp_id };
+    let response_bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_default());
+    idempotency::finalize_and_respond(&state, token, StatusCode::CREATED, response_bytes).await
 }
 
 /// Verify a one-time password.

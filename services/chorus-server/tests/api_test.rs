@@ -13,14 +13,44 @@ use chorus_server::app::{create_router, AppState};
 use chorus_server::config::Config;
 use chorus_server::db::{
     Account, AccountRepository, AddSuppressionResult, ApiKey, ApiKeyRepository, DbError,
-    DeliveryEvent, Message, MessageRepository, NewMessage, NewProviderConfig, NewSuppression,
-    NewWebhook, Pagination, ProviderConfig, ProviderConfigRepository, Suppression,
-    SuppressionRepository, Webhook, WebhookRepository,
+    DeliveryEvent, IdempotencyOutcome, IdempotencyRepository, Message, MessageRepository,
+    NewMessage, NewProviderConfig, NewSuppression, NewWebhook, Pagination, ProviderConfig,
+    ProviderConfigRepository, Suppression, SuppressionRepository, Webhook, WebhookRepository,
 };
 
 // ---------------------------------------------------------------------------
 // Mock repositories
 // ---------------------------------------------------------------------------
+
+/// No-op idempotency repo: returns Fresh for every call so existing tests
+/// behave as if the header was absent. Used by the default test fixture.
+struct NullIdempotencyRepo;
+
+#[async_trait]
+impl IdempotencyRepository for NullIdempotencyRepo {
+    async fn begin(
+        &self,
+        _api_key_id: Uuid,
+        _key: &str,
+        _request_hash: &[u8; 32],
+        _method: &str,
+        _path: &str,
+    ) -> Result<IdempotencyOutcome, DbError> {
+        Ok(IdempotencyOutcome::Fresh)
+    }
+    async fn complete(
+        &self,
+        _api_key_id: Uuid,
+        _key: &str,
+        _response_status: u16,
+        _response_body: &[u8],
+    ) -> Result<(), DbError> {
+        Ok(())
+    }
+    async fn delete_expired(&self, _limit: i64) -> Result<u64, DbError> {
+        Ok(0)
+    }
+}
 
 struct MockAccountRepo {
     account: Account,
@@ -423,6 +453,8 @@ fn test_fixture() -> TestFixture {
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
     let config = Arc::new(Config::from_env());
 
+    let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(NullIdempotencyRepo);
+
     let state = Arc::new(AppState::with_repos(
         redis,
         config,
@@ -432,6 +464,7 @@ fn test_fixture() -> TestFixture {
         provider_config_repo,
         webhook_repo,
         suppressions.clone(),
+        idempotency_repo,
     ));
 
     TestFixture {
@@ -1580,4 +1613,663 @@ async fn sms_batch_with_invalid_e164_marks_entry_invalid_and_continues() {
     assert_eq!(invalid.len(), 1);
     assert_eq!(invalid[0]["to"], "0812345678");
     assert!(invalid[0]["reason"].as_str().unwrap().contains("E.164"));
+}
+
+// ----- C1 idempotency tests -----
+
+/// One row of the in-memory idempotency table:
+/// (request_hash, status, response_status, response_body).
+type MemIdempotencyRow = (Vec<u8>, String, Option<u16>, Option<Vec<u8>>);
+
+/// In-memory idempotency repo backed by a HashMap — captures state for assertions.
+struct MemIdempotencyRepo {
+    rows: tokio::sync::Mutex<std::collections::HashMap<(Uuid, String), MemIdempotencyRow>>,
+}
+
+impl MemIdempotencyRepo {
+    fn new() -> Self {
+        Self {
+            rows: tokio::sync::Mutex::new(Default::default()),
+        }
+    }
+}
+
+#[async_trait]
+impl IdempotencyRepository for MemIdempotencyRepo {
+    async fn begin(
+        &self,
+        api_key_id: Uuid,
+        key: &str,
+        request_hash: &[u8; 32],
+        _method: &str,
+        _path: &str,
+    ) -> Result<IdempotencyOutcome, DbError> {
+        let mut rows = self.rows.lock().await;
+        let k = (api_key_id, key.to_string());
+        match rows.get(&k) {
+            None => {
+                rows.insert(k, (request_hash.to_vec(), "in_progress".into(), None, None));
+                Ok(IdempotencyOutcome::Fresh)
+            }
+            Some((existing_hash, status, response_status, response_body)) => {
+                if existing_hash != &request_hash[..] {
+                    Ok(IdempotencyOutcome::HashMismatch)
+                } else if status == "completed" {
+                    Ok(IdempotencyOutcome::Replay {
+                        status: response_status.unwrap_or(0),
+                        body: response_body.clone().unwrap_or_default(),
+                    })
+                } else {
+                    Err(DbError::Internal(anyhow::anyhow!(
+                        "in_progress without commit — test sequencing bug"
+                    )))
+                }
+            }
+        }
+    }
+
+    async fn complete(
+        &self,
+        api_key_id: Uuid,
+        key: &str,
+        response_status: u16,
+        response_body: &[u8],
+    ) -> Result<(), DbError> {
+        let mut rows = self.rows.lock().await;
+        if let Some(row) = rows.get_mut(&(api_key_id, key.to_string())) {
+            row.1 = "completed".into();
+            row.2 = Some(response_status);
+            row.3 = Some(response_body.to_vec());
+        }
+        Ok(())
+    }
+
+    async fn delete_expired(&self, _limit: i64) -> Result<u64, DbError> {
+        Ok(0)
+    }
+}
+
+/// Build an AppState wired with a real MemIdempotencyRepo.
+fn fixture_with_mem_idempotency() -> (Arc<AppState>, Arc<MockMessageRepo>) {
+    let key_hash = hex::encode(Sha256::digest(TEST_API_KEY.as_bytes()));
+    let account_id = Uuid::new_v4();
+    let key_id = Uuid::new_v4();
+
+    let account_repo = Arc::new(MockAccountRepo {
+        account: Account {
+            id: account_id,
+            name: "Test Account".into(),
+            owner_email: "test@example.com".into(),
+            is_active: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        },
+        api_key: ApiKey {
+            id: key_id,
+            account_id,
+            name: "test key".into(),
+            key_prefix: "ch_test_abcdef12...".into(),
+            environment: "test".into(),
+            last_used_at: None,
+            expires_at: None,
+            is_revoked: false,
+            created_at: Utc::now(),
+        },
+        key_hash,
+    });
+
+    let messages = Arc::new(MockMessageRepo::new());
+    let suppressions = Arc::new(MockSuppressionRepo::new());
+    let api_key_repo = Arc::new(MockApiKeyRepo);
+    let provider_config_repo = Arc::new(MockProviderConfigRepo);
+    let webhook_repo = Arc::new(MockWebhookRepo);
+    let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
+
+    let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+    let config = Arc::new(Config::from_env());
+
+    let state = Arc::new(AppState::with_repos(
+        redis,
+        config,
+        account_repo,
+        messages.clone(),
+        api_key_repo,
+        provider_config_repo,
+        webhook_repo,
+        suppressions,
+        idempotency_repo,
+    ));
+
+    (state, messages)
+}
+
+/// Seed a suppression for the given recipient via the public HTTP API,
+/// so subsequent `/v1/sms/send` calls hit the 422 short-circuit path
+/// (no message_repo insert, no Redis enqueue — keeps tests offline).
+async fn seed_sms_suppression(app: &axum::Router, recipient: &str) {
+    let body = serde_json::json!({"channel":"sms","recipient":recipient}).to_string();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(resp.status().is_success() || resp.status() == StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn sms_send_with_idempotency_key_caches_and_replays() {
+    // Use the suppressed-recipient path so we exercise idempotency without
+    // requiring Redis for the enqueue step.
+    let (state, msg_repo) = fixture_with_mem_idempotency();
+    let app = create_router(state);
+    seed_sms_suppression(&app, "+66812345678").await;
+
+    let body = serde_json::json!({"to":"+66812345678","body":"hi"}).to_string();
+    let key = "test-key-1";
+
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes1 = resp1.into_body().collect().await.unwrap().to_bytes();
+
+    let resp2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(bytes1, bytes2, "replay must be byte-for-byte identical");
+    assert_eq!(
+        msg_repo.messages.lock().unwrap().len(),
+        0,
+        "suppressed sends must not create messages on either call"
+    );
+}
+
+#[tokio::test]
+async fn sms_send_with_same_key_different_body_returns_422_idempotency_key_reused() {
+    // First request returns 422 (suppression). Second request with same key but
+    // different body must return 422 with code=idempotency_key_reused (not
+    // recipient_suppressed) — proving hash mismatch is detected.
+    let (state, _msg_repo) = fixture_with_mem_idempotency();
+    let app = create_router(state);
+    seed_sms_suppression(&app, "+66812345678").await;
+    let key = "test-key-2";
+
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::json!({"to":"+66812345678","body":"A"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let resp2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::json!({"to":"+66812345678","body":"B"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let v = response_body(resp2).await;
+    assert_eq!(v["error"]["code"], "idempotency_key_reused");
+}
+
+#[tokio::test]
+async fn sms_send_with_invalid_idempotency_header_returns_400() {
+    let (state, _msg_repo) = fixture_with_mem_idempotency();
+    let app = create_router(state);
+    let body = serde_json::json!({"to":"+66812345678","body":"hi"}).to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", "")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let v = response_body(resp).await;
+    assert_eq!(v["error"]["code"], "invalid_idempotency_key");
+
+    let long = "a".repeat(256);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", long)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn sms_send_without_idempotency_key_keeps_existing_behavior() {
+    // Without the header, behavior should match the legacy path — including
+    // returning 422 for a suppressed recipient.
+    let (state, _msg_repo) = fixture_with_mem_idempotency();
+    let app = create_router(state);
+    seed_sms_suppression(&app, "+66812345678").await;
+    let body = serde_json::json!({"to":"+66812345678","body":"hi"}).to_string();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Seed an email suppression so /v1/email/send hits the 422 short-circuit.
+async fn seed_email_suppression(app: &axum::Router, recipient: &str) {
+    let body = serde_json::json!({"channel":"email","recipient":recipient}).to_string();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(resp.status().is_success() || resp.status() == StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn email_send_with_idempotency_key_caches_and_replays() {
+    let (state, msg_repo) = fixture_with_mem_idempotency();
+    let app = create_router(state);
+    seed_email_suppression(&app, "alice@example.com").await;
+
+    let body = serde_json::json!({
+        "to":"alice@example.com",
+        "subject":"hello",
+        "body":"hi"
+    })
+    .to_string();
+    let key = "email-key-1";
+
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/email/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes1 = resp1.into_body().collect().await.unwrap().to_bytes();
+
+    let resp2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/email/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(bytes1, bytes2);
+    assert_eq!(msg_repo.messages.lock().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn otp_send_with_idempotency_key_replays() {
+    // Use suppressed recipient so we don't need Redis for otp::store.
+    let (state, _msg_repo) = fixture_with_mem_idempotency();
+    let app = create_router(state);
+    seed_sms_suppression(&app, "+66812345678").await;
+
+    let body = serde_json::json!({"to":"+66812345678"}).to_string();
+    let key = "otp-key-1";
+
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/otp/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes1 = resp1.into_body().collect().await.unwrap().to_bytes();
+
+    let resp2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/otp/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(bytes1, bytes2, "OTP replay must be byte-for-byte identical");
+}
+
+#[tokio::test]
+async fn sms_batch_with_idempotency_key_replays_full_partition() {
+    let (state, _msg_repo) = fixture_with_mem_idempotency();
+    let app = create_router(state);
+    seed_sms_suppression(&app, "+66811111111").await;
+    seed_sms_suppression(&app, "+66822222222").await;
+
+    let body = serde_json::json!({
+        "from": null,
+        "recipients": [
+            {"to":"+66811111111","body":"a"},
+            {"to":"+66822222222","body":"b"}
+        ]
+    })
+    .to_string();
+    let key = "batch-key-1";
+
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send-batch")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::MULTI_STATUS);
+    let bytes1 = resp1.into_body().collect().await.unwrap().to_bytes();
+
+    let resp2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send-batch")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::MULTI_STATUS);
+    let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
+
+    assert_eq!(
+        bytes1, bytes2,
+        "batch replay must be byte-for-byte identical"
+    );
+}
+
+// ----- C1 cross-API-key isolation -----
+
+const TEST_API_KEY_A: &str =
+    "ch_test_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const TEST_API_KEY_B: &str =
+    "ch_test_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+struct MockMultiKeyAccountRepo {
+    account: Account,
+    keys: std::collections::HashMap<String, ApiKey>,
+}
+
+#[async_trait]
+impl AccountRepository for MockMultiKeyAccountRepo {
+    async fn find_by_api_key_hash(&self, hash: &str) -> Result<Option<(Account, ApiKey)>, DbError> {
+        Ok(self
+            .keys
+            .get(hash)
+            .map(|k| (self.account.clone(), k.clone())))
+    }
+
+    async fn update_key_last_used(&self, _key_id: Uuid) -> Result<(), DbError> {
+        Ok(())
+    }
+}
+
+fn fixture_two_api_keys() -> Arc<AppState> {
+    let account_id = Uuid::new_v4();
+    let account = Account {
+        id: account_id,
+        name: "Test Account".into(),
+        owner_email: "test@example.com".into(),
+        is_active: true,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+
+    let mut keys = std::collections::HashMap::new();
+    keys.insert(
+        hex::encode(Sha256::digest(TEST_API_KEY_A.as_bytes())),
+        ApiKey {
+            id: Uuid::new_v4(),
+            account_id,
+            name: "key A".into(),
+            key_prefix: "ch_test_aa...".into(),
+            environment: "test".into(),
+            last_used_at: None,
+            expires_at: None,
+            is_revoked: false,
+            created_at: Utc::now(),
+        },
+    );
+    keys.insert(
+        hex::encode(Sha256::digest(TEST_API_KEY_B.as_bytes())),
+        ApiKey {
+            id: Uuid::new_v4(),
+            account_id,
+            name: "key B".into(),
+            key_prefix: "ch_test_bb...".into(),
+            environment: "test".into(),
+            last_used_at: None,
+            expires_at: None,
+            is_revoked: false,
+            created_at: Utc::now(),
+        },
+    );
+
+    let account_repo = Arc::new(MockMultiKeyAccountRepo { account, keys });
+    let messages = Arc::new(MockMessageRepo::new());
+    let suppressions = Arc::new(MockSuppressionRepo::new());
+    let api_key_repo = Arc::new(MockApiKeyRepo);
+    let provider_config_repo = Arc::new(MockProviderConfigRepo);
+    let webhook_repo = Arc::new(MockWebhookRepo);
+    let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
+
+    let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+    let config = Arc::new(Config::from_env());
+
+    Arc::new(AppState::with_repos(
+        redis,
+        config,
+        account_repo,
+        messages,
+        api_key_repo,
+        provider_config_repo,
+        webhook_repo,
+        suppressions,
+        idempotency_repo,
+    ))
+}
+
+#[tokio::test]
+async fn idempotency_is_isolated_by_api_key() {
+    // The same Idempotency-Key value sent under two different API keys must
+    // NOT collide — so reusing the value with a different body under api_key
+    // B must succeed (422 suppression), not return 422 idempotency_key_reused.
+    let state = fixture_two_api_keys();
+    let app = create_router(state);
+
+    // Seed suppression via key A — it doesn't matter which key seeds, the
+    // suppression list is per-account.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY_A}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"sms","recipient":"+66812345678"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(resp.status().is_success() || resp.status() == StatusCode::CONFLICT);
+
+    let key = "shared-idem-key";
+
+    // Call 1 — API key A, body=A
+    let resp_a = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY_A}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::json!({"to":"+66812345678","body":"A"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp_a.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let v_a = response_body(resp_a).await;
+    assert_eq!(v_a["error"]["code"], "recipient_suppressed");
+
+    // Call 2 — API key B, body=B (would collide with A under shared scope)
+    let resp_b = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/sms/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY_B}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::json!({"to":"+66812345678","body":"B"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp_b.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let v_b = response_body(resp_b).await;
+    // If isolation works, B sees its own fresh slot → suppression check
+    // fires → recipient_suppressed. If broken, it would be idempotency_key_reused.
+    assert_eq!(
+        v_b["error"]["code"], "recipient_suppressed",
+        "same Idempotency-Key under a different api_key must not collide"
+    );
 }

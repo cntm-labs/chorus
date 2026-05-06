@@ -3,6 +3,7 @@ pub mod auth;
 pub mod billing;
 pub mod config;
 pub mod db;
+pub mod idempotency;
 pub mod metrics;
 pub mod middleware;
 pub mod otp;

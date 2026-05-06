@@ -7,13 +7,15 @@ use std::sync::Arc;
 
 use crate::config::Config;
 use crate::db::billing::{BillingRepository, PgBillingRepository};
+use crate::db::idempotency::PgIdempotencyRepository;
 use crate::db::postgres::PgRepository;
 use crate::db::provider_config::PgProviderConfigRepository;
 use crate::db::suppression::PgSuppressionRepository;
 use crate::db::webhook::PgWebhookRepository;
 use crate::db::{
-    AccountRepository, AdminKeyRepository, AdminRepository, ApiKeyRepository, MessageRepository,
-    PgAdminRepository, ProviderConfigRepository, SuppressionRepository, WebhookRepository,
+    AccountRepository, AdminKeyRepository, AdminRepository, ApiKeyRepository,
+    IdempotencyRepository, MessageRepository, PgAdminRepository, ProviderConfigRepository,
+    SuppressionRepository, WebhookRepository,
 };
 use crate::routes;
 
@@ -39,6 +41,8 @@ pub struct AppState {
     webhook_repo: Arc<dyn WebhookRepository>,
     /// Suppression list repository.
     suppression_repo: Arc<dyn SuppressionRepository>,
+    /// Idempotency record repository.
+    idempotency_repo: Arc<dyn IdempotencyRepository>,
     /// Billing repository.
     billing_repo: Arc<dyn BillingRepository>,
     /// Admin key repository.
@@ -54,6 +58,7 @@ impl AppState {
         let provider_config_repo = Arc::new(PgProviderConfigRepository::new(db.clone()));
         let webhook_repo = Arc::new(PgWebhookRepository::new(db.clone()));
         let suppression_repo = Arc::new(PgSuppressionRepository::new(db.clone()));
+        let idempotency_repo = Arc::new(PgIdempotencyRepository::new(db.clone()));
         let billing_repo = Arc::new(PgBillingRepository::new(db.clone()));
         let admin_repo = Arc::new(PgAdminRepository::new(db.clone()));
         Self {
@@ -68,12 +73,14 @@ impl AppState {
             provider_config_repo,
             webhook_repo,
             suppression_repo,
+            idempotency_repo,
             billing_repo,
             admin_repo,
         }
     }
 
     /// Create app state with custom repositories (for testing).
+    #[allow(clippy::too_many_arguments)]
     pub fn with_repos(
         redis: redis::Client,
         config: Arc<Config>,
@@ -83,6 +90,7 @@ impl AppState {
         provider_config_repo: Arc<dyn ProviderConfigRepository>,
         webhook_repo: Arc<dyn WebhookRepository>,
         suppression_repo: Arc<dyn SuppressionRepository>,
+        idempotency_repo: Arc<dyn IdempotencyRepository>,
     ) -> Self {
         Self {
             db: None,
@@ -95,6 +103,7 @@ impl AppState {
             provider_config_repo,
             webhook_repo,
             suppression_repo,
+            idempotency_repo,
             billing_repo: Arc::new(crate::db::billing::NullBillingRepository),
             admin_key_repo: Arc::new(NullAdminKeyRepository),
             admin_repo: Arc::new(NullAdminRepository),
@@ -129,6 +138,11 @@ impl AppState {
     /// Access the suppression repository.
     pub fn suppression_repo(&self) -> Arc<dyn SuppressionRepository> {
         Arc::clone(&self.suppression_repo)
+    }
+
+    /// Access the idempotency repository.
+    pub fn idempotency_repo(&self) -> Arc<dyn IdempotencyRepository> {
+        Arc::clone(&self.idempotency_repo)
     }
 
     /// Access the billing repository.

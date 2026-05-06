@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod billing;
+pub mod idempotency;
 pub mod postgres;
 pub mod provider_config;
 pub mod suppression;
@@ -18,6 +19,9 @@ pub enum DbError {
     /// Requested entity was not found.
     #[error("not found")]
     NotFound,
+    /// Statement timed out — used to signal a busy idempotency lock.
+    #[error("statement timeout")]
+    Timeout,
     /// Internal database error.
     #[error("database error: {0}")]
     Internal(#[from] anyhow::Error),
@@ -329,4 +333,67 @@ pub trait SuppressionRepository: Send + Sync {
         channel: Option<&str>,
         pagination: &Pagination,
     ) -> Result<Vec<Suppression>, DbError>;
+}
+
+/// An idempotency record for a previously-seen request.
+#[derive(Debug, Clone)]
+pub struct IdempotencyRecord {
+    pub api_key_id: Uuid,
+    pub idempotency_key: String,
+    pub request_hash: [u8; 32],
+    pub request_method: String,
+    pub request_path: String,
+    pub status: IdempotencyStatus,
+    pub response_status: Option<u16>,
+    pub response_body: Option<Vec<u8>>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Lifecycle status for an idempotency record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IdempotencyStatus {
+    /// Record was inserted but the original request has not yet completed.
+    InProgress,
+    /// Record has a cached response and can be replayed.
+    Completed,
+}
+
+/// Outcome of an `IdempotencyRepository::begin` call.
+#[derive(Debug, Clone)]
+pub enum IdempotencyOutcome {
+    /// First time this key has been seen — caller proceeds and calls `complete`.
+    Fresh,
+    /// Existing completed row with matching hash — caller returns this response verbatim.
+    Replay { status: u16, body: Vec<u8> },
+    /// Existing row with a different request hash — caller returns 422.
+    HashMismatch,
+}
+
+/// Idempotency record management.
+#[async_trait]
+pub trait IdempotencyRepository: Send + Sync {
+    /// Atomically insert a fresh `in_progress` row, or read an existing row under
+    /// a row-level lock. Stale `in_progress` rows older than 60 s are recovered.
+    async fn begin(
+        &self,
+        api_key_id: Uuid,
+        key: &str,
+        request_hash: &[u8; 32],
+        method: &str,
+        path: &str,
+    ) -> Result<IdempotencyOutcome, DbError>;
+
+    /// Mark an `in_progress` row as `completed` and store the response.
+    async fn complete(
+        &self,
+        api_key_id: Uuid,
+        key: &str,
+        response_status: u16,
+        response_body: &[u8],
+    ) -> Result<(), DbError>;
+
+    /// Delete up to `limit` rows where `expires_at < now()`.
+    /// Returns the number of rows actually deleted.
+    async fn delete_expired(&self, limit: i64) -> Result<u64, DbError>;
 }

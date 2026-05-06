@@ -1,6 +1,7 @@
+use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::StatusCode;
-use axum::Json;
+use axum::http::{HeaderMap, Method, StatusCode};
+use axum::response::Response;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -8,7 +9,11 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::auth::api_key::AccountContext;
 use crate::db::NewMessage;
+use crate::idempotency::{self, IdempotencyAction, IdempotencyToken};
 use crate::queue::SendJob;
+
+const SMS_BATCH_PATH: &str = "/v1/sms/send-batch";
+const EMAIL_BATCH_PATH: &str = "/v1/email/send-batch";
 
 /// Maximum recipients per batch request.
 const MAX_BATCH_SIZE: usize = 100;
@@ -76,20 +81,46 @@ pub struct BatchSendResponse {
     pub error: Option<String>,
 }
 
-/// Queue a batch of SMS messages. Returns 202 Accepted.
+/// Queue a batch of SMS messages. Returns 202 Accepted (or 207 with mixed results).
 ///
-/// Suppressed recipients are filtered out in a first pass before any enqueue
-/// operations. Returns 207 Multi-Status when at least one recipient is
-/// suppressed; 202 Accepted when all entries are queued.
-/// On partial enqueue failure, returns already-queued results with an error field.
+/// Honors `Idempotency-Key` at the batch level: replaying with the same key
+/// and identical body returns the original response without enqueueing again.
 pub async fn send_sms_batch(
     State(state): State<Arc<AppState>>,
     ctx: AccountContext,
-    Json(req): Json<SendSmsBatchRequest>,
-) -> Result<(StatusCode, Json<BatchSendResponse>), (StatusCode, String)> {
-    validate_batch_size(req.recipients.len())?;
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let token = match idempotency::begin(
+        &state,
+        ctx.key_id,
+        &headers,
+        &Method::POST,
+        SMS_BATCH_PATH,
+        &body,
+    )
+    .await
+    {
+        IdempotencyAction::Skip => None,
+        IdempotencyAction::Proceed { token } => Some(token),
+        IdempotencyAction::Respond {
+            status,
+            body: resp_body,
+        } => return idempotency::finalize_and_respond(&state, None, status, resp_body).await,
+    };
 
-    // --- Pass 1: suppression check for all recipients ---
+    let req: SendSmsBatchRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            let (status, body) = idempotency::bad_request(e.to_string());
+            return idempotency::finalize_and_respond(&state, token, status, body).await;
+        }
+    };
+
+    if let Err((status, body)) = validate_batch_size(req.recipients.len()) {
+        return idempotency::finalize_and_respond(&state, token, status, body).await;
+    }
+
     let mut results: Vec<BatchMessageResult> = Vec::with_capacity(req.recipients.len());
 
     for recipient in &req.recipients {
@@ -113,10 +144,10 @@ pub async fn send_sms_batch(
                 });
             }
             Err(crate::suppression::SuppressionRejection::Db(e)) => {
-                return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+                let (status, body) = idempotency::internal_error(e.to_string());
+                return idempotency::finalize_and_respond(&state, token, status, body).await;
             }
             Ok(()) => {
-                // Placeholder — Pass 2 transitions to "queued" / "failed" / "skipped".
                 results.push(BatchMessageResult {
                     message_id: None,
                     to: recipient.to.clone(),
@@ -127,15 +158,12 @@ pub async fn send_sms_batch(
         }
     }
 
-    // --- Pass 2: insert + enqueue non-suppressed recipients ---
     let mut enqueue_error: Option<String> = None;
-
     for (i, recipient) in req.recipients.iter().enumerate() {
         if results[i].status != "pending" {
             continue;
         }
         if enqueue_error.is_some() {
-            // An earlier entry failed; don't attempt this one.
             results[i].status = "skipped";
             continue;
         }
@@ -150,7 +178,6 @@ pub async fn send_sms_batch(
             body: recipient.body.clone(),
             environment: ctx.environment.clone(),
         };
-
         let message = match state.message_repo().insert(&new_msg).await {
             Ok(m) => m,
             Err(e) => {
@@ -177,37 +204,48 @@ pub async fn send_sms_batch(
         results[i].status = "queued";
     }
 
-    // 207 when any entry has a non-queued outcome (suppressed/invalid/failed/skipped),
-    // 202 only when all entries successfully queued.
-    let all_queued = results.iter().all(|r| r.status == "queued");
-    let status = if all_queued {
-        StatusCode::ACCEPTED
-    } else {
-        StatusCode::MULTI_STATUS
-    };
-    Ok((
-        status,
-        Json(BatchSendResponse {
-            messages: results,
-            error: enqueue_error,
-        }),
-    ))
+    finalize_batch(&state, token, results, enqueue_error).await
 }
 
-/// Queue a batch of email messages. Returns 202 Accepted.
+/// Queue a batch of email messages. Returns 202 Accepted (or 207 with mixed results).
 ///
-/// Suppressed recipients are filtered out in a first pass before any enqueue
-/// operations. Returns 207 Multi-Status when at least one recipient is
-/// suppressed; 202 Accepted when all entries are queued.
-/// On partial enqueue failure, returns already-queued results with an error field.
+/// Honors `Idempotency-Key` at the batch level.
 pub async fn send_email_batch(
     State(state): State<Arc<AppState>>,
     ctx: AccountContext,
-    Json(req): Json<SendEmailBatchRequest>,
-) -> Result<(StatusCode, Json<BatchSendResponse>), (StatusCode, String)> {
-    validate_batch_size(req.recipients.len())?;
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let token = match idempotency::begin(
+        &state,
+        ctx.key_id,
+        &headers,
+        &Method::POST,
+        EMAIL_BATCH_PATH,
+        &body,
+    )
+    .await
+    {
+        IdempotencyAction::Skip => None,
+        IdempotencyAction::Proceed { token } => Some(token),
+        IdempotencyAction::Respond {
+            status,
+            body: resp_body,
+        } => return idempotency::finalize_and_respond(&state, None, status, resp_body).await,
+    };
 
-    // --- Pass 1: suppression check for all recipients ---
+    let req: SendEmailBatchRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            let (status, body) = idempotency::bad_request(e.to_string());
+            return idempotency::finalize_and_respond(&state, token, status, body).await;
+        }
+    };
+
+    if let Err((status, body)) = validate_batch_size(req.recipients.len()) {
+        return idempotency::finalize_and_respond(&state, token, status, body).await;
+    }
+
     let mut results: Vec<BatchMessageResult> = Vec::with_capacity(req.recipients.len());
 
     for recipient in &req.recipients {
@@ -231,10 +269,10 @@ pub async fn send_email_batch(
                 });
             }
             Err(crate::suppression::SuppressionRejection::Db(e)) => {
-                return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+                let (status, body) = idempotency::internal_error(e.to_string());
+                return idempotency::finalize_and_respond(&state, token, status, body).await;
             }
             Ok(()) => {
-                // Placeholder — Pass 2 transitions to "queued" / "failed" / "skipped".
                 results.push(BatchMessageResult {
                     message_id: None,
                     to: recipient.to.clone(),
@@ -245,15 +283,12 @@ pub async fn send_email_batch(
         }
     }
 
-    // --- Pass 2: insert + enqueue non-suppressed recipients ---
     let mut enqueue_error: Option<String> = None;
-
     for (i, recipient) in req.recipients.iter().enumerate() {
         if results[i].status != "pending" {
             continue;
         }
         if enqueue_error.is_some() {
-            // An earlier entry failed; don't attempt this one.
             results[i].status = "skipped";
             continue;
         }
@@ -268,7 +303,6 @@ pub async fn send_email_batch(
             body: recipient.body.clone(),
             environment: ctx.environment.clone(),
         };
-
         let message = match state.message_repo().insert(&new_msg).await {
             Ok(m) => m,
             Err(e) => {
@@ -295,33 +329,39 @@ pub async fn send_email_batch(
         results[i].status = "queued";
     }
 
-    // 207 when any entry has a non-queued outcome (suppressed/invalid/failed/skipped),
-    // 202 only when all entries successfully queued.
+    finalize_batch(&state, token, results, enqueue_error).await
+}
+
+/// Build the final batch response and cache it via idempotency.
+async fn finalize_batch(
+    state: &Arc<AppState>,
+    token: Option<IdempotencyToken>,
+    results: Vec<BatchMessageResult>,
+    enqueue_error: Option<String>,
+) -> Response {
     let all_queued = results.iter().all(|r| r.status == "queued");
     let status = if all_queued {
         StatusCode::ACCEPTED
     } else {
         StatusCode::MULTI_STATUS
     };
-    Ok((
-        status,
-        Json(BatchSendResponse {
-            messages: results,
-            error: enqueue_error,
-        }),
-    ))
+    let response = BatchSendResponse {
+        messages: results,
+        error: enqueue_error,
+    };
+    let bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_default());
+    idempotency::finalize_and_respond(state, token, status, bytes).await
 }
 
 /// Validate that the batch size is within bounds.
-fn validate_batch_size(size: usize) -> Result<(), (StatusCode, String)> {
+fn validate_batch_size(size: usize) -> Result<(), (StatusCode, Bytes)> {
     if size == 0 {
-        return Err((StatusCode::BAD_REQUEST, "recipients cannot be empty".into()));
+        return Err(idempotency::bad_request("recipients cannot be empty"));
     }
     if size > MAX_BATCH_SIZE {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            format!("max {MAX_BATCH_SIZE} recipients per batch"),
-        ));
+        return Err(idempotency::bad_request(format!(
+            "max {MAX_BATCH_SIZE} recipients per batch"
+        )));
     }
     Ok(())
 }
