@@ -1,6 +1,16 @@
 [advisories]
-# rsa v0.9.10 (RUSTSEC-2023-0071) is pulled into Cargo.lock as an optional
-# dependency of sqlx-macros-core for MySQL support. chorus does not enable
-# the MySQL feature and never links or uses the rsa crate. No fix is
-# available upstream; ignore until sqlx drops the dependency.
-ignore = ["RUSTSEC-2023-0071"]
+ignore = [
+    # rsa v0.9.10 (RUSTSEC-2023-0071) is pulled into Cargo.lock as an optional
+    # dependency of sqlx-macros-core for MySQL support. chorus does not enable
+    # the MySQL feature and never links or uses the rsa crate. No fix is
+    # available upstream; ignore until sqlx drops the dependency.
+    "RUSTSEC-2023-0071",
+    # hickory-proto NSEC3 unbounded loop on cross-zone DNS responses.
+    # Pulled in transitively via hickory-resolver. No fixed upgrade available.
+    # We use hickory only for DNS health checks, never for cross-zone resolution.
+    "RUSTSEC-2026-0118",
+    # hickory-proto O(n²) name compression CPU exhaustion during message encoding.
+    # Pulled in transitively via hickory-resolver. No fixed upgrade available.
+    # We do not encode arbitrary attacker-controlled DNS messages.
+    "RUSTSEC-2026-0119",
+]
