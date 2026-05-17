@@ -15,7 +15,8 @@ use chorus_server::db::{
     Account, AccountRepository, AddSuppressionResult, ApiKey, ApiKeyRepository, DbError,
     DeliveryEvent, IdempotencyOutcome, IdempotencyRepository, Message, MessageRepository,
     NewMessage, NewProviderConfig, NewSuppression, NewWebhook, Pagination, ProviderConfig,
-    ProviderConfigRepository, Suppression, SuppressionRepository, Webhook, WebhookRepository,
+    ProviderConfigRepository, Suppression, SuppressionRepository, VerificationRepository,
+    Webhook, WebhookRepository,
 };
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,58 @@ impl IdempotencyRepository for NullIdempotencyRepo {
         Ok(())
     }
     async fn delete_expired(&self, _limit: i64) -> Result<u64, DbError> {
+        Ok(0)
+    }
+}
+
+/// No-op verification repo for tests that don't exercise verification logic.
+struct NullVerificationRepo;
+
+#[async_trait]
+impl chorus_server::db::VerificationRepository for NullVerificationRepo {
+    async fn insert(
+        &self,
+        _v: &chorus_server::db::NewVerification,
+    ) -> Result<chorus_server::db::Verification, DbError> {
+        Err(DbError::Internal(anyhow::anyhow!("NullVerificationRepo::insert not implemented")))
+    }
+    async fn find_by_id(
+        &self,
+        _id: Uuid,
+        _account_id: Uuid,
+    ) -> Result<Option<chorus_server::db::Verification>, DbError> {
+        Ok(None)
+    }
+    async fn list_by_account(
+        &self,
+        _account_id: Uuid,
+        _pagination: &chorus_server::db::Pagination,
+    ) -> Result<Vec<chorus_server::db::Verification>, DbError> {
+        Ok(vec![])
+    }
+    async fn increment_check_attempts(
+        &self,
+        _id: Uuid,
+        _account_id: Uuid,
+    ) -> Result<i32, DbError> {
+        Err(DbError::NotFound)
+    }
+    async fn mark_approved(&self, _id: Uuid, _account_id: Uuid) -> Result<(), DbError> {
+        Err(DbError::NotFound)
+    }
+    async fn mark_canceled(&self, _id: Uuid, _account_id: Uuid) -> Result<bool, DbError> {
+        Ok(false)
+    }
+    async fn record_resend(
+        &self,
+        _id: Uuid,
+        _account_id: Uuid,
+        _cost: i64,
+        _max: i32,
+    ) -> Result<chorus_server::db::Verification, DbError> {
+        Err(DbError::NotFound)
+    }
+    async fn expire_pending(&self, _limit: i64) -> Result<u64, DbError> {
         Ok(0)
     }
 }
@@ -454,6 +507,7 @@ fn test_fixture() -> TestFixture {
     let config = Arc::new(Config::from_env());
 
     let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(NullIdempotencyRepo);
+    let verification_repo: Arc<dyn VerificationRepository> = Arc::new(NullVerificationRepo);
 
     let state = Arc::new(AppState::with_repos(
         redis,
@@ -465,6 +519,7 @@ fn test_fixture() -> TestFixture {
         webhook_repo,
         suppressions.clone(),
         idempotency_repo,
+        verification_repo,
     ));
 
     TestFixture {
@@ -1724,6 +1779,7 @@ fn fixture_with_mem_idempotency() -> (Arc<AppState>, Arc<MockMessageRepo>) {
     let provider_config_repo = Arc::new(MockProviderConfigRepo);
     let webhook_repo = Arc::new(MockWebhookRepo);
     let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
+    let verification_repo: Arc<dyn VerificationRepository> = Arc::new(NullVerificationRepo);
 
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
     let config = Arc::new(Config::from_env());
@@ -1738,6 +1794,7 @@ fn fixture_with_mem_idempotency() -> (Arc<AppState>, Arc<MockMessageRepo>) {
         webhook_repo,
         suppressions,
         idempotency_repo,
+        verification_repo,
     ));
 
     (state, messages)
@@ -2180,6 +2237,7 @@ fn fixture_two_api_keys() -> Arc<AppState> {
     let provider_config_repo = Arc::new(MockProviderConfigRepo);
     let webhook_repo = Arc::new(MockWebhookRepo);
     let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
+    let verification_repo: Arc<dyn VerificationRepository> = Arc::new(NullVerificationRepo);
 
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
     let config = Arc::new(Config::from_env());
@@ -2194,6 +2252,7 @@ fn fixture_two_api_keys() -> Arc<AppState> {
         webhook_repo,
         suppressions,
         idempotency_repo,
+        verification_repo,
     ))
 }
 

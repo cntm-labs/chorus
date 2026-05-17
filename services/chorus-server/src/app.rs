@@ -11,11 +11,12 @@ use crate::db::idempotency::PgIdempotencyRepository;
 use crate::db::postgres::PgRepository;
 use crate::db::provider_config::PgProviderConfigRepository;
 use crate::db::suppression::PgSuppressionRepository;
+use crate::db::verification::PgVerificationRepository;
 use crate::db::webhook::PgWebhookRepository;
 use crate::db::{
     AccountRepository, AdminKeyRepository, AdminRepository, ApiKeyRepository,
     IdempotencyRepository, MessageRepository, PgAdminRepository, ProviderConfigRepository,
-    SuppressionRepository, WebhookRepository,
+    SuppressionRepository, VerificationRepository, WebhookRepository,
 };
 use crate::routes;
 
@@ -43,6 +44,8 @@ pub struct AppState {
     suppression_repo: Arc<dyn SuppressionRepository>,
     /// Idempotency record repository.
     idempotency_repo: Arc<dyn IdempotencyRepository>,
+    /// Verification record repository.
+    verification_repo: Arc<dyn VerificationRepository>,
     /// Billing repository.
     billing_repo: Arc<dyn BillingRepository>,
     /// Admin key repository.
@@ -59,6 +62,7 @@ impl AppState {
         let webhook_repo = Arc::new(PgWebhookRepository::new(db.clone()));
         let suppression_repo = Arc::new(PgSuppressionRepository::new(db.clone()));
         let idempotency_repo = Arc::new(PgIdempotencyRepository::new(db.clone()));
+        let verification_repo = Arc::new(PgVerificationRepository::new(db.clone()));
         let billing_repo = Arc::new(PgBillingRepository::new(db.clone()));
         let admin_repo = Arc::new(PgAdminRepository::new(db.clone()));
         Self {
@@ -74,6 +78,7 @@ impl AppState {
             webhook_repo,
             suppression_repo,
             idempotency_repo,
+            verification_repo,
             billing_repo,
             admin_repo,
         }
@@ -91,6 +96,7 @@ impl AppState {
         webhook_repo: Arc<dyn WebhookRepository>,
         suppression_repo: Arc<dyn SuppressionRepository>,
         idempotency_repo: Arc<dyn IdempotencyRepository>,
+        verification_repo: Arc<dyn VerificationRepository>,
     ) -> Self {
         Self {
             db: None,
@@ -104,6 +110,7 @@ impl AppState {
             webhook_repo,
             suppression_repo,
             idempotency_repo,
+            verification_repo,
             billing_repo: Arc::new(crate::db::billing::NullBillingRepository),
             admin_key_repo: Arc::new(NullAdminKeyRepository),
             admin_repo: Arc::new(NullAdminRepository),
@@ -143,6 +150,11 @@ impl AppState {
     /// Access the idempotency repository.
     pub fn idempotency_repo(&self) -> Arc<dyn IdempotencyRepository> {
         Arc::clone(&self.idempotency_repo)
+    }
+
+    /// Access the verification repository.
+    pub fn verification_repo(&self) -> Arc<dyn VerificationRepository> {
+        Arc::clone(&self.verification_repo)
     }
 
     /// Access the billing repository.
