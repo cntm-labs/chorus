@@ -244,6 +244,20 @@ pub fn create_router_with_metrics(
             post(routes::billing::create_checkout),
         )
         .route("/v1/billing/usage", get(routes::billing::get_usage))
+        .route(
+            "/v1/verifications",
+            post(routes::verifications::create_verification)
+                .get(routes::verifications::list_verifications),
+        )
+        .route("/v1/verifications/{id}", get(routes::verifications::get_verification))
+        .route(
+            "/v1/verifications/{id}/check",
+            post(routes::verifications::check_verification),
+        )
+        .route(
+            "/v1/verifications/{id}/cancel",
+            post(routes::verifications::cancel_verification),
+        )
         .route("/internal/bounces", post(routes::internal::handle_bounce))
         .route("/internal/dns-check", get(routes::internal::dns_check))
         .nest("/admin", routes::admin::router())
