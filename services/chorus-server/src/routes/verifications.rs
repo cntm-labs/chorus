@@ -63,6 +63,19 @@ pub async fn create_verification(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let start = std::time::Instant::now();
+    let response = create_verification_inner(state, ctx, headers, body).await;
+    metrics::histogram!(verification::metrics_keys::CREATE_DURATION)
+        .record(start.elapsed().as_secs_f64());
+    response
+}
+
+async fn create_verification_inner(
+    state: Arc<AppState>,
+    ctx: AccountContext,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     let token = match idempotency::begin(
         &state,
         ctx.key_id,
@@ -144,6 +157,22 @@ pub async fn create_verification(
     }
 
     let bytes = Bytes::from(serde_json::to_vec(&v).unwrap_or_default());
+    metrics::counter!(
+        verification::metrics_keys::VERIFICATIONS_TOTAL,
+        "channel" => choice.channel().to_string(),
+        "outcome" => "created"
+    )
+    .increment(1);
+    metrics::counter!(
+        verification::metrics_keys::ROUTING_TOTAL,
+        "chosen_channel" => choice.channel().to_string()
+    )
+    .increment(1);
+    metrics::counter!(
+        verification::metrics_keys::COST_TOTAL,
+        "channel" => choice.channel().to_string()
+    )
+    .increment(choice.cost_micro() as u64);
     idempotency::finalize_and_respond(&state, token, StatusCode::CREATED, bytes).await
 }
 
@@ -153,6 +182,19 @@ pub async fn check_verification(
     ctx: AccountContext,
     Path(id): Path<Uuid>,
     Json(req): Json<CheckRequest>,
+) -> Response {
+    let start = std::time::Instant::now();
+    let response = check_verification_inner(state, ctx, id, req).await;
+    metrics::histogram!(verification::metrics_keys::CHECK_DURATION)
+        .record(start.elapsed().as_secs_f64());
+    response
+}
+
+async fn check_verification_inner(
+    state: Arc<AppState>,
+    ctx: AccountContext,
+    id: Uuid,
+    req: CheckRequest,
 ) -> Response {
     let repo = state.verification_repo();
     let v = match repo.find_by_id(id, ctx.account_id).await {
@@ -175,6 +217,12 @@ pub async fn check_verification(
     if new_attempts > MAX_CHECK_ATTEMPTS {
         let _ = verification::invalidate_code(&state.redis, id).await;
         let _ = repo.mark_canceled(id, ctx.account_id).await;
+        metrics::counter!(
+            verification::metrics_keys::VERIFICATIONS_TOTAL,
+            "channel" => v.channel.clone(),
+            "outcome" => "max_attempts"
+        )
+        .increment(1);
         return error_response(
             StatusCode::GONE,
             "max_attempts_exceeded",
@@ -191,6 +239,12 @@ pub async fn check_verification(
                 Ok(Some(v)) => v,
                 _ => v,
             };
+            metrics::counter!(
+                verification::metrics_keys::VERIFICATIONS_TOTAL,
+                "channel" => approved.channel.clone(),
+                "outcome" => "approved"
+            )
+            .increment(1);
             (StatusCode::OK, Json(approved)).into_response()
         }
         Ok(CheckCodeOutcome::Mismatch) => {
@@ -202,9 +256,21 @@ pub async fn check_verification(
                     "attempts_remaining": remaining.max(0),
                 }
             });
+            metrics::counter!(
+                verification::metrics_keys::VERIFICATIONS_TOTAL,
+                "channel" => v.channel.clone(),
+                "outcome" => "incorrect_code"
+            )
+            .increment(1);
             (StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response()
         }
         Ok(CheckCodeOutcome::Gone) => {
+            metrics::counter!(
+                verification::metrics_keys::VERIFICATIONS_TOTAL,
+                "channel" => v.channel.clone(),
+                "outcome" => "expired"
+            )
+            .increment(1);
             error_response(StatusCode::GONE, "expired", "verification code has expired")
         }
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),

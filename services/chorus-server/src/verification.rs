@@ -371,6 +371,14 @@ pub async fn expire_pending_loop(state: Arc<AppState>) {
     }
 }
 
+pub mod metrics_keys {
+    pub const VERIFICATIONS_TOTAL: &str = "chorus_verifications_total";
+    pub const ROUTING_TOTAL: &str = "chorus_verifications_routing_total";
+    pub const CREATE_DURATION: &str = "chorus_verifications_create_duration_seconds";
+    pub const CHECK_DURATION: &str = "chorus_verifications_check_duration_seconds";
+    pub const COST_TOTAL: &str = "chorus_verifications_cost_micro_total";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
