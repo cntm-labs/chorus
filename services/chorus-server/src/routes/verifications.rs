@@ -280,6 +280,154 @@ pub async fn list_verifications(
     }
 }
 
+#[derive(Deserialize, Default)]
+pub struct ResendRequest {
+    /// Optional channel override; otherwise reuse the original channel.
+    pub channel: Option<String>,
+}
+
+const RESEND_PATH: &str = "/v1/verifications/resend";
+
+/// POST /v1/verifications/{id}/resend
+pub async fn resend_verification(
+    State(state): State<Arc<AppState>>,
+    ctx: AccountContext,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let token = match idempotency::begin(
+        &state,
+        ctx.key_id,
+        &headers,
+        &Method::POST,
+        RESEND_PATH,
+        &body,
+    )
+    .await
+    {
+        IdempotencyAction::Skip => None,
+        IdempotencyAction::Proceed { token } => Some(token),
+        IdempotencyAction::Respond { status, body: b } => {
+            return idempotency::finalize_and_respond(&state, None, status, b).await;
+        }
+    };
+
+    let req: ResendRequest = if body.is_empty() {
+        ResendRequest::default()
+    } else {
+        match serde_json::from_slice(&body) {
+            Ok(r) => r,
+            Err(e) => {
+                let (s, b) = idempotency::bad_request(e.to_string());
+                return idempotency::finalize_and_respond(&state, token, s, b).await;
+            }
+        }
+    };
+
+    let repo = state.verification_repo();
+    let existing = match repo.find_by_id(id, ctx.account_id).await {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            let (s, b) = error_json(StatusCode::NOT_FOUND, "not_found", "verification not found");
+            return idempotency::finalize_and_respond(&state, token, s, b).await;
+        }
+        Err(e) => {
+            let (s, b) = idempotency::internal_error(e.to_string());
+            return idempotency::finalize_and_respond(&state, token, s, b).await;
+        }
+    };
+    if existing.status != "pending" {
+        let (s, b) = error_json(
+            StatusCode::GONE,
+            &existing.status,
+            "verification is not pending",
+        );
+        return idempotency::finalize_and_respond(&state, token, s, b).await;
+    }
+
+    // Per-account rate-limit only (per spec §5.5). We re-use the existing
+    // recipient hash since the recipient is already known.
+    let rl_hash = verification::hash_recipient(&existing.recipient);
+    if let Err(e) =
+        verification::check_rate_limits(&state.redis, ctx.account_id, &rl_hash).await
+    {
+        return route_routing_error(&state, token, e).await;
+    }
+
+    // Choose channel: override (if same as existing) or original. We don't
+    // support cross-channel switch in B1 because the DB row only stores one
+    // recipient — switching requires the other channel's recipient which we
+    // don't have. Future B1 follow-up may store both.
+    let target_channel = req.channel.unwrap_or_else(|| existing.channel.clone());
+    if target_channel != existing.channel {
+        let (s, b) = error_json(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "no_eligible_channel",
+            "channel switch on resend is not supported in MVP",
+        );
+        return idempotency::finalize_and_respond(&state, token, s, b).await;
+    }
+    let choice = match target_channel.as_str() {
+        "email" => ChannelChoice::Email {
+            recipient: existing.recipient.clone(),
+            cost_micro: verification::cost_for("email", &existing.recipient),
+        },
+        "sms" => ChannelChoice::Sms {
+            recipient: existing.recipient.clone(),
+            cost_micro: verification::cost_for("sms", &existing.recipient),
+        },
+        _ => {
+            let (s, b) = error_json(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "no_eligible_channel",
+                "unknown channel",
+            );
+            return idempotency::finalize_and_respond(&state, token, s, b).await;
+        }
+    };
+
+    let code = verification::generate_code();
+    if let Err(e) =
+        verification::store_code(&state.redis, id, choice.recipient(), &code).await
+    {
+        let (s, b) = idempotency::internal_error(e.to_string());
+        return idempotency::finalize_and_respond(&state, token, s, b).await;
+    }
+
+    let updated = match repo
+        .record_resend(
+            id,
+            ctx.account_id,
+            choice.cost_micro(),
+            verification::MAX_RESEND_ATTEMPTS,
+        )
+        .await
+    {
+        Ok(v) => v,
+        Err(crate::db::DbError::NotFound) => {
+            let (s, b) = error_json(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "max_resends_reached",
+                "verification has reached the max resend attempts",
+            );
+            return idempotency::finalize_and_respond(&state, token, s, b).await;
+        }
+        Err(e) => {
+            let (s, b) = idempotency::internal_error(e.to_string());
+            return idempotency::finalize_and_respond(&state, token, s, b).await;
+        }
+    };
+
+    if let Err(e) = enqueue_verification_send(&state, &ctx, &updated, &choice, &code).await {
+        let (s, b) = idempotency::internal_error(e.to_string());
+        return idempotency::finalize_and_respond(&state, token, s, b).await;
+    }
+
+    let bytes = Bytes::from(serde_json::to_vec(&updated).unwrap_or_default());
+    idempotency::finalize_and_respond(&state, token, StatusCode::OK, bytes).await
+}
+
 // ---- internal helpers ----
 
 pub(crate) async fn enqueue_verification_send(

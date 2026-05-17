@@ -258,6 +258,10 @@ pub fn create_router_with_metrics(
             "/v1/verifications/{id}/cancel",
             post(routes::verifications::cancel_verification),
         )
+        .route(
+            "/v1/verifications/{id}/resend",
+            post(routes::verifications::resend_verification),
+        )
         .route("/internal/bounces", post(routes::internal::handle_bounce))
         .route("/internal/dns-check", get(routes::internal::dns_check))
         .nest("/admin", routes::admin::router())
