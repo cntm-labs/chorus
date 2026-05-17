@@ -47,7 +47,7 @@ fn extract_country(e164: &str) -> &'static str {
     let digits = e164.trim_start_matches('+');
     // Longest match first (greedy).
     const PREFIXES: &[(&str, &str)] = &[
-        ("1", "US"),   // also CA — single rate applies
+        ("1", "US"), // also CA — single rate applies
         ("44", "UK"),
         ("49", "DE"),
         ("66", "TH"),
@@ -124,11 +124,16 @@ pub async fn check_code(
     let key = valkey_key(id);
     let mut conn = redis.get_multiplexed_tokio_connection().await?;
     let raw: Option<String> = redis::cmd("GET").arg(&key).query_async(&mut conn).await?;
-    let Some(raw) = raw else { return Ok(CheckCodeOutcome::Gone) };
+    let Some(raw) = raw else {
+        return Ok(CheckCodeOutcome::Gone);
+    };
     let data: serde_json::Value = serde_json::from_str(&raw)?;
     let stored = data["code"].as_str().unwrap_or("");
     if stored == code {
-        redis::cmd("DEL").arg(&key).query_async::<i64>(&mut conn).await?;
+        redis::cmd("DEL")
+            .arg(&key)
+            .query_async::<i64>(&mut conn)
+            .await?;
         Ok(CheckCodeOutcome::Match)
     } else {
         Ok(CheckCodeOutcome::Mismatch)
@@ -139,7 +144,10 @@ pub async fn check_code(
 pub async fn invalidate_code(redis: &redis::Client, id: Uuid) -> anyhow::Result<()> {
     let key = valkey_key(id);
     let mut conn = redis.get_multiplexed_tokio_connection().await?;
-    redis::cmd("DEL").arg(&key).query_async::<i64>(&mut conn).await?;
+    redis::cmd("DEL")
+        .arg(&key)
+        .query_async::<i64>(&mut conn)
+        .await?;
     Ok(())
 }
 

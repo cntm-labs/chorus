@@ -49,14 +49,13 @@ impl VerificationRepository for PgVerificationRepository {
         id: Uuid,
         account_id: Uuid,
     ) -> Result<Option<Verification>, DbError> {
-        let row: Option<Verification> = sqlx::query_as(
-            "SELECT * FROM verifications WHERE id = $1 AND account_id = $2",
-        )
-        .bind(id)
-        .bind(account_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_err)?;
+        let row: Option<Verification> =
+            sqlx::query_as("SELECT * FROM verifications WHERE id = $1 AND account_id = $2")
+                .bind(id)
+                .bind(account_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_err)?;
         Ok(row)
     }
 
@@ -80,11 +79,7 @@ impl VerificationRepository for PgVerificationRepository {
         Ok(rows)
     }
 
-    async fn increment_check_attempts(
-        &self,
-        id: Uuid,
-        account_id: Uuid,
-    ) -> Result<i32, DbError> {
+    async fn increment_check_attempts(&self, id: Uuid, account_id: Uuid) -> Result<i32, DbError> {
         let row: Option<(i32,)> = sqlx::query_as(
             "UPDATE verifications
              SET check_attempts = check_attempts + 1, updated_at = now()
@@ -259,7 +254,13 @@ mod tests {
                 .unwrap();
         }
         let rows = repo
-            .list_by_account(acct, &Pagination { limit: 10, offset: 0 })
+            .list_by_account(
+                acct,
+                &Pagination {
+                    limit: 10,
+                    offset: 0,
+                },
+            )
             .await
             .unwrap();
         assert_eq!(rows.len(), 3);
@@ -386,13 +387,11 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let n: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM verifications WHERE account_id = $1",
-        )
-        .bind(acct)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM verifications WHERE account_id = $1")
+            .bind(acct)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(n, 0);
     }
 }

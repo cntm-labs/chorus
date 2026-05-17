@@ -119,9 +119,7 @@ async fn create_verification_inner(
 
     // Rate limits — keyed on the chosen recipient (after format validation).
     let rl_hash = verification::hash_recipient(choice.recipient());
-    if let Err(e) =
-        verification::check_rate_limits(&state.redis, ctx.account_id, &rl_hash).await
-    {
+    if let Err(e) = verification::check_rate_limits(&state.redis, ctx.account_id, &rl_hash).await {
         return route_routing_error(&state, token, e).await;
     }
 
@@ -144,9 +142,7 @@ async fn create_verification_inner(
         }
     };
 
-    if let Err(e) =
-        verification::store_code(&state.redis, v.id, choice.recipient(), &code).await
-    {
+    if let Err(e) = verification::store_code(&state.redis, v.id, choice.recipient(), &code).await {
         let (status, body) = idempotency::internal_error(e.to_string());
         return idempotency::finalize_and_respond(&state, token, status, body).await;
     }
@@ -199,8 +195,16 @@ async fn check_verification_inner(
     let repo = state.verification_repo();
     let v = match repo.find_by_id(id, ctx.account_id).await {
         Ok(Some(v)) => v,
-        Ok(None) => return error_response(StatusCode::NOT_FOUND, "not_found", "verification not found"),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Ok(None) => {
+            return error_response(StatusCode::NOT_FOUND, "not_found", "verification not found")
+        }
+        Err(e) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            )
+        }
     };
     if v.status != "pending" {
         return error_response(StatusCode::GONE, &v.status, "verification is not pending");
@@ -209,9 +213,19 @@ async fn check_verification_inner(
     let new_attempts = match repo.increment_check_attempts(id, ctx.account_id).await {
         Ok(n) => n,
         Err(crate::db::DbError::NotFound) => {
-            return error_response(StatusCode::GONE, "expired", "verification is no longer pending");
+            return error_response(
+                StatusCode::GONE,
+                "expired",
+                "verification is no longer pending",
+            );
         }
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            )
+        }
     };
 
     if new_attempts > MAX_CHECK_ATTEMPTS {
@@ -233,7 +247,11 @@ async fn check_verification_inner(
     match verification::check_code(&state.redis, id, &req.code).await {
         Ok(CheckCodeOutcome::Match) => {
             if let Err(e) = repo.mark_approved(id, ctx.account_id).await {
-                return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string());
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    &e.to_string(),
+                );
             }
             let approved = match repo.find_by_id(id, ctx.account_id).await {
                 Ok(Some(v)) => v,
@@ -273,7 +291,11 @@ async fn check_verification_inner(
             .increment(1);
             error_response(StatusCode::GONE, "expired", "verification code has expired")
         }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -289,15 +311,33 @@ pub async fn cancel_verification(
             let _ = verification::invalidate_code(&state.redis, id).await;
             let row = match repo.find_by_id(id, ctx.account_id).await {
                 Ok(Some(v)) => v,
-                Ok(None) => return error_response(StatusCode::NOT_FOUND, "not_found", "verification not found"),
-                Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+                Ok(None) => {
+                    return error_response(
+                        StatusCode::NOT_FOUND,
+                        "not_found",
+                        "verification not found",
+                    )
+                }
+                Err(e) => {
+                    return error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal",
+                        &e.to_string(),
+                    )
+                }
             };
             (StatusCode::OK, Json(row)).into_response()
         }
-        Ok(false) => {
-            error_response(StatusCode::GONE, "already_terminal", "verification is not pending")
-        }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Ok(false) => error_response(
+            StatusCode::GONE,
+            "already_terminal",
+            "verification is not pending",
+        ),
+        Err(e) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -307,10 +347,18 @@ pub async fn get_verification(
     ctx: AccountContext,
     Path(id): Path<Uuid>,
 ) -> Response {
-    match state.verification_repo().find_by_id(id, ctx.account_id).await {
+    match state
+        .verification_repo()
+        .find_by_id(id, ctx.account_id)
+        .await
+    {
         Ok(Some(v)) => (StatusCode::OK, Json(v)).into_response(),
         Ok(None) => error_response(StatusCode::NOT_FOUND, "not_found", "verification not found"),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -330,10 +378,18 @@ pub async fn list_verifications(
     {
         Ok(data) => (
             StatusCode::OK,
-            Json(ListResponse { data, limit, offset }),
+            Json(ListResponse {
+                data,
+                limit,
+                offset,
+            }),
         )
             .into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -406,9 +462,7 @@ pub async fn resend_verification(
     // Per-account rate-limit only (per spec §5.5). We re-use the existing
     // recipient hash since the recipient is already known.
     let rl_hash = verification::hash_recipient(&existing.recipient);
-    if let Err(e) =
-        verification::check_rate_limits(&state.redis, ctx.account_id, &rl_hash).await
-    {
+    if let Err(e) = verification::check_rate_limits(&state.redis, ctx.account_id, &rl_hash).await {
         return route_routing_error(&state, token, e).await;
     }
 
@@ -445,9 +499,7 @@ pub async fn resend_verification(
     };
 
     let code = verification::generate_code();
-    if let Err(e) =
-        verification::store_code(&state.redis, id, choice.recipient(), &code).await
-    {
+    if let Err(e) = verification::store_code(&state.redis, id, choice.recipient(), &code).await {
         let (s, b) = idempotency::internal_error(e.to_string());
         return idempotency::finalize_and_respond(&state, token, s, b).await;
     }
@@ -530,7 +582,10 @@ fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
 
 fn error_json(status: StatusCode, code: &str, message: &str) -> (StatusCode, Bytes) {
     let body = serde_json::json!({ "error": { "code": code, "message": message } });
-    (status, Bytes::from(serde_json::to_vec(&body).unwrap_or_default()))
+    (
+        status,
+        Bytes::from(serde_json::to_vec(&body).unwrap_or_default()),
+    )
 }
 
 async fn route_routing_error(
@@ -540,15 +595,27 @@ async fn route_routing_error(
 ) -> Response {
     match err {
         RoutingError::NoRecipient => {
-            let (s, b) = error_json(StatusCode::BAD_REQUEST, "no_recipient", "phone or email required");
+            let (s, b) = error_json(
+                StatusCode::BAD_REQUEST,
+                "no_recipient",
+                "phone or email required",
+            );
             idempotency::finalize_and_respond(state, token, s, b).await
         }
         RoutingError::InvalidPhone => {
-            let (s, b) = error_json(StatusCode::BAD_REQUEST, "invalid_phone", "phone must be E.164");
+            let (s, b) = error_json(
+                StatusCode::BAD_REQUEST,
+                "invalid_phone",
+                "phone must be E.164",
+            );
             idempotency::finalize_and_respond(state, token, s, b).await
         }
         RoutingError::InvalidEmail => {
-            let (s, b) = error_json(StatusCode::BAD_REQUEST, "invalid_email", "email format is invalid");
+            let (s, b) = error_json(
+                StatusCode::BAD_REQUEST,
+                "invalid_email",
+                "email format is invalid",
+            );
             idempotency::finalize_and_respond(state, token, s, b).await
         }
         RoutingError::NoEligibleChannel => {
@@ -572,7 +639,8 @@ async fn route_routing_error(
             }
             let mut resp = (s, b).into_response();
             if let Ok(v) = HeaderValue::from_str(&retry_after_sec.to_string()) {
-                resp.headers_mut().insert(axum::http::header::RETRY_AFTER, v);
+                resp.headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, v);
             }
             resp
         }

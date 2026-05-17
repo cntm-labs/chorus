@@ -437,11 +437,8 @@ pub trait VerificationRepository: Send + Sync {
     async fn insert(&self, v: &NewVerification) -> Result<Verification, DbError>;
 
     /// Find by id scoped to an account.
-    async fn find_by_id(
-        &self,
-        id: Uuid,
-        account_id: Uuid,
-    ) -> Result<Option<Verification>, DbError>;
+    async fn find_by_id(&self, id: Uuid, account_id: Uuid)
+        -> Result<Option<Verification>, DbError>;
 
     /// List for an account ordered by created_at DESC.
     async fn list_by_account(
@@ -452,11 +449,7 @@ pub trait VerificationRepository: Send + Sync {
 
     /// Increment `check_attempts` atomically; returns the new count.
     /// Errors with `NotFound` if status != 'pending'.
-    async fn increment_check_attempts(
-        &self,
-        id: Uuid,
-        account_id: Uuid,
-    ) -> Result<i32, DbError>;
+    async fn increment_check_attempts(&self, id: Uuid, account_id: Uuid) -> Result<i32, DbError>;
 
     /// Set status='approved' (only if currently pending). Returns NotFound otherwise.
     async fn mark_approved(&self, id: Uuid, account_id: Uuid) -> Result<(), DbError>;

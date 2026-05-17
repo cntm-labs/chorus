@@ -62,7 +62,9 @@ impl chorus_server::db::VerificationRepository for NullVerificationRepo {
         &self,
         _v: &chorus_server::db::NewVerification,
     ) -> Result<chorus_server::db::Verification, DbError> {
-        Err(DbError::Internal(anyhow::anyhow!("NullVerificationRepo::insert not implemented")))
+        Err(DbError::Internal(anyhow::anyhow!(
+            "NullVerificationRepo::insert not implemented"
+        )))
     }
     async fn find_by_id(
         &self,
@@ -78,11 +80,7 @@ impl chorus_server::db::VerificationRepository for NullVerificationRepo {
     ) -> Result<Vec<chorus_server::db::Verification>, DbError> {
         Ok(vec![])
     }
-    async fn increment_check_attempts(
-        &self,
-        _id: Uuid,
-        _account_id: Uuid,
-    ) -> Result<i32, DbError> {
+    async fn increment_check_attempts(&self, _id: Uuid, _account_id: Uuid) -> Result<i32, DbError> {
         Err(DbError::NotFound)
     }
     async fn mark_approved(&self, _id: Uuid, _account_id: Uuid) -> Result<(), DbError> {
@@ -2341,7 +2339,9 @@ struct MemVerificationRepo {
 
 impl MemVerificationRepo {
     fn new() -> Self {
-        Self { rows: tokio::sync::Mutex::new(vec![]) }
+        Self {
+            rows: tokio::sync::Mutex::new(vec![]),
+        }
     }
 }
 
@@ -2369,8 +2369,18 @@ impl VerificationRepository for MemVerificationRepo {
         self.rows.lock().await.push(row.clone());
         Ok(row)
     }
-    async fn find_by_id(&self, id: Uuid, account_id: Uuid) -> Result<Option<Verification>, DbError> {
-        Ok(self.rows.lock().await.iter().find(|v| v.id == id && v.account_id == account_id).cloned())
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+        account_id: Uuid,
+    ) -> Result<Option<Verification>, DbError> {
+        Ok(self
+            .rows
+            .lock()
+            .await
+            .iter()
+            .find(|v| v.id == id && v.account_id == account_id)
+            .cloned())
     }
     async fn list_by_account(
         &self,
@@ -2378,7 +2388,8 @@ impl VerificationRepository for MemVerificationRepo {
         pagination: &chorus_server::db::Pagination,
     ) -> Result<Vec<Verification>, DbError> {
         let rows = self.rows.lock().await;
-        Ok(rows.iter()
+        Ok(rows
+            .iter()
             .filter(|v| v.account_id == account_id)
             .skip(pagination.offset as usize)
             .take(pagination.limit as usize)
@@ -2387,7 +2398,10 @@ impl VerificationRepository for MemVerificationRepo {
     }
     async fn increment_check_attempts(&self, id: Uuid, account_id: Uuid) -> Result<i32, DbError> {
         let mut rows = self.rows.lock().await;
-        if let Some(v) = rows.iter_mut().find(|v| v.id == id && v.account_id == account_id && v.status == "pending") {
+        if let Some(v) = rows
+            .iter_mut()
+            .find(|v| v.id == id && v.account_id == account_id && v.status == "pending")
+        {
             v.check_attempts += 1;
             return Ok(v.check_attempts);
         }
@@ -2395,7 +2409,10 @@ impl VerificationRepository for MemVerificationRepo {
     }
     async fn mark_approved(&self, id: Uuid, account_id: Uuid) -> Result<(), DbError> {
         let mut rows = self.rows.lock().await;
-        if let Some(v) = rows.iter_mut().find(|v| v.id == id && v.account_id == account_id && v.status == "pending") {
+        if let Some(v) = rows
+            .iter_mut()
+            .find(|v| v.id == id && v.account_id == account_id && v.status == "pending")
+        {
             v.status = "approved".into();
             return Ok(());
         }
@@ -2403,7 +2420,10 @@ impl VerificationRepository for MemVerificationRepo {
     }
     async fn mark_canceled(&self, id: Uuid, account_id: Uuid) -> Result<bool, DbError> {
         let mut rows = self.rows.lock().await;
-        if let Some(v) = rows.iter_mut().find(|v| v.id == id && v.account_id == account_id && v.status == "pending") {
+        if let Some(v) = rows
+            .iter_mut()
+            .find(|v| v.id == id && v.account_id == account_id && v.status == "pending")
+        {
             v.status = "canceled".into();
             return Ok(true);
         }
@@ -2417,10 +2437,12 @@ impl VerificationRepository for MemVerificationRepo {
         max_resends: i32,
     ) -> Result<Verification, DbError> {
         let mut rows = self.rows.lock().await;
-        if let Some(v) = rows.iter_mut().find(|v|
-            v.id == id && v.account_id == account_id
-            && v.status == "pending" && v.resend_attempts < max_resends
-        ) {
+        if let Some(v) = rows.iter_mut().find(|v| {
+            v.id == id
+                && v.account_id == account_id
+                && v.status == "pending"
+                && v.resend_attempts < max_resends
+        }) {
             v.resend_attempts += 1;
             v.cost_micro += additional_cost_micro;
             v.check_attempts = 0;
@@ -2428,7 +2450,9 @@ impl VerificationRepository for MemVerificationRepo {
         }
         Err(DbError::NotFound)
     }
-    async fn expire_pending(&self, _limit: i64) -> Result<u64, DbError> { Ok(0) }
+    async fn expire_pending(&self, _limit: i64) -> Result<u64, DbError> {
+        Ok(0)
+    }
 }
 
 /// Build an AppState wired with both MemIdempotencyRepo and MemVerificationRepo.
@@ -2438,13 +2462,23 @@ fn fixture_with_verification() -> (Arc<AppState>, Arc<MemVerificationRepo>) {
     let key_id = Uuid::new_v4();
     let account_repo = Arc::new(MockAccountRepo {
         account: Account {
-            id: account_id, name: "Test".into(), owner_email: "t@t".into(),
-            is_active: true, created_at: Utc::now(), updated_at: Utc::now(),
+            id: account_id,
+            name: "Test".into(),
+            owner_email: "t@t".into(),
+            is_active: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         },
         api_key: ApiKey {
-            id: key_id, account_id, name: "k".into(), key_prefix: "ch_test_ab...".into(),
-            environment: "test".into(), last_used_at: None, expires_at: None,
-            is_revoked: false, created_at: Utc::now(),
+            id: key_id,
+            account_id,
+            name: "k".into(),
+            key_prefix: "ch_test_ab...".into(),
+            environment: "test".into(),
+            last_used_at: None,
+            expires_at: None,
+            is_revoked: false,
+            created_at: Utc::now(),
         },
         key_hash,
     });
@@ -2459,9 +2493,16 @@ fn fixture_with_verification() -> (Arc<AppState>, Arc<MemVerificationRepo>) {
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
     let config = Arc::new(Config::from_env());
     let state = Arc::new(AppState::with_repos(
-        redis, config, account_repo, messages, api_key_repo,
-        provider_config_repo, webhook_repo, suppressions,
-        idempotency_repo, verification_dyn,
+        redis,
+        config,
+        account_repo,
+        messages,
+        api_key_repo,
+        provider_config_repo,
+        webhook_repo,
+        suppressions,
+        idempotency_repo,
+        verification_dyn,
     ));
     (state, verification_repo)
 }
@@ -2475,17 +2516,21 @@ async fn create_verification_with_email_returns_201_with_email_channel() {
         "phone": "+66812345678",
         "email": "alice@example.com",
         "app_name": "Acme"
-    }).to_string();
+    })
+    .to_string();
 
-    let resp = app.oneshot(
-        Request::builder()
-            .method("POST")
-            .uri("/v1/verifications")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body))
-            .unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/verifications")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
     assert_eq!(resp.status(), StatusCode::CREATED);
     let v = response_body(resp).await;
@@ -2499,15 +2544,18 @@ async fn create_verification_with_email_returns_201_with_email_channel() {
 async fn create_verification_returns_400_when_no_recipient() {
     let (state, _repo) = fixture_with_verification();
     let app = create_router(state);
-    let resp = app.oneshot(
-        Request::builder()
-            .method("POST")
-            .uri("/v1/verifications")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from("{}"))
-            .unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/verifications")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let v = response_body(resp).await;
     assert_eq!(v["error"]["code"], "no_recipient");
@@ -2518,15 +2566,18 @@ async fn create_verification_returns_400_when_invalid_phone() {
     let (state, _repo) = fixture_with_verification();
     let app = create_router(state);
     let body = serde_json::json!({ "phone": "0812345678" }).to_string();
-    let resp = app.oneshot(
-        Request::builder()
-            .method("POST")
-            .uri("/v1/verifications")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body))
-            .unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/verifications")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     assert_eq!(response_body(resp).await["error"]["code"], "invalid_phone");
 }
@@ -2536,34 +2587,59 @@ async fn create_verification_returns_422_when_no_eligible_channel() {
     let (state, _repo) = fixture_with_verification();
     let app = create_router(state.clone());
     // Suppress both
-    let _ = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/suppressions")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(r#"{"channel":"email","recipient":"alice@example.com"}"#))
-            .unwrap()
-    ).await.unwrap();
-    let _ = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/suppressions")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(r#"{"channel":"sms","recipient":"+66812345678"}"#))
-            .unwrap()
-    ).await.unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"alice@example.com"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"sms","recipient":"+66812345678"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
     let body = serde_json::json!({
         "phone": "+66812345678",
         "email": "alice@example.com",
-    }).to_string();
-    let resp = app.oneshot(
-        Request::builder().method("POST").uri("/v1/verifications")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body))
-            .unwrap()
-    ).await.unwrap();
+    })
+    .to_string();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/verifications")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(response_body(resp).await["error"]["code"], "no_eligible_channel");
+    assert_eq!(
+        response_body(resp).await["error"]["code"],
+        "no_eligible_channel"
+    );
 }
 
 #[tokio::test]
@@ -2571,24 +2647,38 @@ async fn create_verification_returns_422_when_no_eligible_channel() {
 async fn create_verification_falls_back_to_sms_when_email_suppressed() {
     let (state, _repo) = fixture_with_verification();
     let app = create_router(state);
-    let _ = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/suppressions")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(r#"{"channel":"email","recipient":"alice@example.com"}"#))
-            .unwrap()
-    ).await.unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"email","recipient":"alice@example.com"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let body = serde_json::json!({
         "phone": "+66812345678",
         "email": "alice@example.com",
-    }).to_string();
-    let resp = app.oneshot(
-        Request::builder().method("POST").uri("/v1/verifications")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body))
-            .unwrap()
-    ).await.unwrap();
+    })
+    .to_string();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/verifications")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let v = response_body(resp).await;
     assert_eq!(v["channel"], "sms");
@@ -2613,24 +2703,37 @@ async fn check_with_correct_code_returns_approved() {
     let app = create_router(state.clone());
 
     let body = serde_json::json!({"email":"a@b.com"}).to_string();
-    let resp = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/verifications")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body)).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/verifications")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let id = last_verification_id(&repo).await;
 
     seed_pending_code(&state, id, "999111").await;
 
     let check_body = serde_json::json!({"code":"999111"}).to_string();
-    let resp = app.oneshot(
-        Request::builder().method("POST").uri(format!("/v1/verifications/{id}/check"))
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(check_body)).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/verifications/{id}/check"))
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(check_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(response_body(resp).await["status"], "approved");
 }
@@ -2641,21 +2744,34 @@ async fn check_with_wrong_code_returns_422_with_attempts_remaining() {
     let (state, repo) = fixture_with_verification();
     let app = create_router(state.clone());
     let body = serde_json::json!({"email":"a@b.com"}).to_string();
-    let _ = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/verifications")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body)).unwrap()
-    ).await.unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/verifications")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let id = last_verification_id(&repo).await;
     seed_pending_code(&state, id, "111222").await;
 
-    let resp = app.oneshot(
-        Request::builder().method("POST").uri(format!("/v1/verifications/{id}/check"))
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(r#"{"code":"000000"}"#)).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/verifications/{id}/check"))
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"code":"000000"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let v = response_body(resp).await;
     assert_eq!(v["error"]["code"], "incorrect_code");
@@ -2668,28 +2784,48 @@ async fn cancel_pending_returns_canceled() {
     let (state, repo) = fixture_with_verification();
     let app = create_router(state);
     let body = serde_json::json!({"email":"a@b.com"}).to_string();
-    let _ = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/verifications")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body)).unwrap()
-    ).await.unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/verifications")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let id = last_verification_id(&repo).await;
 
-    let resp = app.clone().oneshot(
-        Request::builder().method("POST").uri(format!("/v1/verifications/{id}/cancel"))
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .body(axum::body::Body::empty()).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/verifications/{id}/cancel"))
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(response_body(resp).await["status"], "canceled");
 
     // Second cancel → 410
-    let resp = app.oneshot(
-        Request::builder().method("POST").uri(format!("/v1/verifications/{id}/cancel"))
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .body(axum::body::Body::empty()).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/verifications/{id}/cancel"))
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::GONE);
 }
 
@@ -2699,27 +2835,47 @@ async fn get_returns_verification_and_404_for_unknown() {
     let (state, repo) = fixture_with_verification();
     let app = create_router(state);
     let body = serde_json::json!({"email":"a@b.com"}).to_string();
-    let _ = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/verifications")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body)).unwrap()
-    ).await.unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/verifications")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let id = last_verification_id(&repo).await;
 
-    let resp = app.clone().oneshot(
-        Request::builder().method("GET").uri(format!("/v1/verifications/{id}"))
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .body(axum::body::Body::empty()).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/verifications/{id}"))
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     let other = Uuid::new_v4();
-    let resp = app.oneshot(
-        Request::builder().method("GET").uri(format!("/v1/verifications/{other}"))
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .body(axum::body::Body::empty()).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/verifications/{other}"))
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
@@ -2730,18 +2886,31 @@ async fn list_paginates() {
     let app = create_router(state);
     for i in 0..3 {
         let body = serde_json::json!({"email": format!("u{i}@x.com")}).to_string();
-        let _ = app.clone().oneshot(
-            Request::builder().method("POST").uri("/v1/verifications")
-                .header("authorization", format!("Bearer {TEST_API_KEY}"))
-                .header("content-type", "application/json")
-                .body(axum::body::Body::from(body)).unwrap()
-        ).await.unwrap();
+        let _ = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/verifications")
+                    .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
     }
-    let resp = app.oneshot(
-        Request::builder().method("GET").uri("/v1/verifications?limit=2")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .body(axum::body::Body::empty()).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/verifications?limit=2")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let v = response_body(resp).await;
     assert_eq!(v["data"].as_array().unwrap().len(), 2);
@@ -2756,23 +2925,36 @@ async fn create_verification_idempotency_replay_is_identical() {
     let key = "verify-key-1";
     let body = serde_json::json!({"email":"alice@example.com"}).to_string();
 
-    let resp1 = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/verifications")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("Idempotency-Key", key)
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body.clone())).unwrap()
-    ).await.unwrap();
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/verifications")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp1.status(), StatusCode::CREATED);
     let bytes1 = resp1.into_body().collect().await.unwrap().to_bytes();
 
-    let resp2 = app.oneshot(
-        Request::builder().method("POST").uri("/v1/verifications")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("Idempotency-Key", key)
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body)).unwrap()
-    ).await.unwrap();
+    let resp2 = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/verifications")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp2.status(), StatusCode::CREATED);
     let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(bytes1, bytes2);
@@ -2784,19 +2966,33 @@ async fn legacy_otp_send_still_works() {
     let (state, _repo) = fixture_with_verification();
     let app = create_router(state);
     // Pre-suppress recipient to skip Redis enqueue (mirrors C1 test pattern).
-    let _ = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/suppressions")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(r#"{"channel":"sms","recipient":"+66812345678"}"#))
-            .unwrap()
-    ).await.unwrap();
-    let resp = app.oneshot(
-        Request::builder().method("POST").uri("/v1/otp/send")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(r#"{"to":"+66812345678"}"#)).unwrap()
-    ).await.unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/suppressions")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    r#"{"channel":"sms","recipient":"+66812345678"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/otp/send")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"to":"+66812345678"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     // Legacy route returns 422 due to suppression — works as before.
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
