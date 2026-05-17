@@ -243,6 +243,116 @@ pub async fn check_rate_limits(
     }
 }
 
+use std::sync::Arc;
+
+use crate::app::AppState;
+
+/// What channel `select_channel` picked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChannelChoice {
+    Email { recipient: String, cost_micro: i64 },
+    Sms { recipient: String, cost_micro: i64 },
+}
+
+impl ChannelChoice {
+    pub fn channel(&self) -> &'static str {
+        match self {
+            ChannelChoice::Email { .. } => "email",
+            ChannelChoice::Sms { .. } => "sms",
+        }
+    }
+
+    pub fn recipient(&self) -> &str {
+        match self {
+            ChannelChoice::Email { recipient, .. } | ChannelChoice::Sms { recipient, .. } => {
+                recipient
+            }
+        }
+    }
+
+    pub fn cost_micro(&self) -> i64 {
+        match self {
+            ChannelChoice::Email { cost_micro, .. } | ChannelChoice::Sms { cost_micro, .. } => {
+                *cost_micro
+            }
+        }
+    }
+}
+
+/// Pick the cheapest eligible channel per the user's `channels` preference order.
+/// Applies suppression checks; rate-limits are applied by the caller separately.
+pub async fn select_channel(
+    state: &Arc<AppState>,
+    account_id: Uuid,
+    phone: Option<&str>,
+    email: Option<&str>,
+    channels: &[String],
+) -> Result<ChannelChoice, RoutingError> {
+    if phone.is_none() && email.is_none() {
+        return Err(RoutingError::NoRecipient);
+    }
+
+    // Validate format up front so an invalid phone+missing email yields a clear 400.
+    let normalized_email = match email {
+        Some(e) => match crate::suppression::normalize("email", e) {
+            Ok(v) => Some(v),
+            Err(_) => return Err(RoutingError::InvalidEmail),
+        },
+        None => None,
+    };
+    let normalized_phone = match phone {
+        Some(p) => match crate::suppression::normalize("sms", p) {
+            Ok(v) => Some(v),
+            Err(_) => return Err(RoutingError::InvalidPhone),
+        },
+        None => None,
+    };
+
+    let order: Vec<&str> = if channels.is_empty() {
+        vec!["email", "sms"]
+    } else {
+        channels.iter().map(|s| s.as_str()).collect()
+    };
+
+    for channel in order {
+        match channel {
+            "email" => {
+                if let Some(addr) = &normalized_email {
+                    let suppressed = state
+                        .suppression_repo()
+                        .is_suppressed(account_id, "email", addr)
+                        .await
+                        .map_err(RoutingError::Db)?;
+                    if suppressed.is_none() {
+                        return Ok(ChannelChoice::Email {
+                            recipient: addr.clone(),
+                            cost_micro: cost_for("email", addr),
+                        });
+                    }
+                }
+            }
+            "sms" => {
+                if let Some(num) = &normalized_phone {
+                    let suppressed = state
+                        .suppression_repo()
+                        .is_suppressed(account_id, "sms", num)
+                        .await
+                        .map_err(RoutingError::Db)?;
+                    if suppressed.is_none() {
+                        return Ok(ChannelChoice::Sms {
+                            recipient: num.clone(),
+                            cost_micro: cost_for("sms", num),
+                        });
+                    }
+                }
+            }
+            _ => {} // unknown channel values are ignored
+        }
+    }
+
+    Err(RoutingError::NoEligibleChannel)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
