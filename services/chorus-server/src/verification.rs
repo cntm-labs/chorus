@@ -143,6 +143,106 @@ pub async fn invalidate_code(redis: &redis::Client, id: Uuid) -> anyhow::Result<
     Ok(())
 }
 
+/// Reasons routing rejects a verification request.
+#[derive(Debug)]
+pub enum RoutingError {
+    NoRecipient,
+    InvalidPhone,
+    InvalidEmail,
+    NoEligibleChannel,
+    RateLimitedRecipient { retry_after_sec: u64 },
+    RateLimitedAccount { retry_after_sec: u64 },
+    Db(crate::db::DbError),
+    Internal(anyhow::Error),
+}
+
+/// Atomic sliding-window check + increment over two ZSET keys.
+/// Returns:
+///   0           = allowed (and both windows incremented),
+///   recipient   = "rcpt"  → retry-after = oldest_score_recipient + window_ms - now
+///   account     = "acct"
+const RATE_LIMIT_LUA: &str = r#"
+local key_rcpt    = KEYS[1]
+local key_acct    = KEYS[2]
+local now_ms      = tonumber(ARGV[1])
+local window_rcpt = tonumber(ARGV[2])
+local limit_rcpt  = tonumber(ARGV[3])
+local window_acct = tonumber(ARGV[4])
+local limit_acct  = tonumber(ARGV[5])
+local member      = ARGV[6]
+
+redis.call('ZREMRANGEBYSCORE', key_rcpt, 0, now_ms - window_rcpt)
+local count_rcpt = redis.call('ZCARD', key_rcpt)
+if count_rcpt >= limit_rcpt then
+    local oldest = redis.call('ZRANGE', key_rcpt, 0, 0, 'WITHSCORES')
+    return {'rcpt', tonumber(oldest[2]) + window_rcpt - now_ms}
+end
+
+redis.call('ZREMRANGEBYSCORE', key_acct, 0, now_ms - window_acct)
+local count_acct = redis.call('ZCARD', key_acct)
+if count_acct >= limit_acct then
+    local oldest = redis.call('ZRANGE', key_acct, 0, 0, 'WITHSCORES')
+    return {'acct', tonumber(oldest[2]) + window_acct - now_ms}
+end
+
+redis.call('ZADD', key_rcpt, now_ms, member)
+redis.call('ZADD', key_acct, now_ms, member)
+redis.call('EXPIRE', key_rcpt, math.floor(window_rcpt / 1000))
+redis.call('EXPIRE', key_acct, math.floor(window_acct / 1000))
+return {'ok', 0}
+"#;
+
+/// Apply both rate-limit layers atomically.
+pub async fn check_rate_limits(
+    redis: &redis::Client,
+    account_id: Uuid,
+    recipient_hash: &str,
+) -> Result<(), RoutingError> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| RoutingError::Internal(anyhow::anyhow!("clock: {e}")))?
+        .as_millis() as u64;
+
+    let key_rcpt = format!("verify:rl:rcpt:{recipient_hash}");
+    let key_acct = format!("verify:rl:acct:{account_id}");
+    let member = format!("{now_ms}:{}", Uuid::new_v4());
+
+    let window_rcpt_ms: u64 = 60 * 60 * 1000;
+    let window_acct_ms: u64 = 60 * 1000;
+
+    let mut conn = redis
+        .get_multiplexed_tokio_connection()
+        .await
+        .map_err(|e| RoutingError::Internal(anyhow::anyhow!(e)))?;
+
+    let result: (String, i64) = redis::Script::new(RATE_LIMIT_LUA)
+        .key(&key_rcpt)
+        .key(&key_acct)
+        .arg(now_ms)
+        .arg(window_rcpt_ms)
+        .arg(RATE_LIMIT_PER_RCPT_HOUR)
+        .arg(window_acct_ms)
+        .arg(RATE_LIMIT_PER_ACCT_MINUTE)
+        .arg(member)
+        .invoke_async(&mut conn)
+        .await
+        .map_err(|e| RoutingError::Internal(anyhow::anyhow!(e)))?;
+
+    match result.0.as_str() {
+        "ok" => Ok(()),
+        "rcpt" => Err(RoutingError::RateLimitedRecipient {
+            retry_after_sec: (result.1.max(0) as u64).div_ceil(1000),
+        }),
+        "acct" => Err(RoutingError::RateLimitedAccount {
+            retry_after_sec: (result.1.max(0) as u64).div_ceil(1000),
+        }),
+        other => Err(RoutingError::Internal(anyhow::anyhow!(
+            "unknown rate-limit outcome: {other}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
