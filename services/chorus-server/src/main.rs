@@ -43,6 +43,9 @@ async fn main() -> anyhow::Result<()> {
         state.http_client().clone(),
     );
     tokio::spawn(chorus_server::idempotency::cleanup_loop(Arc::clone(&state)));
+    tokio::spawn(chorus_server::verification::expire_pending_loop(
+        Arc::clone(&state),
+    ));
 
     let app = create_router_with_metrics(state, Some(metrics_handle));
 
