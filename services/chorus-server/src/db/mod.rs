@@ -4,6 +4,7 @@ pub mod idempotency;
 pub mod postgres;
 pub mod provider_config;
 pub mod suppression;
+pub mod verification;
 pub mod webhook;
 
 pub use admin::{AdminRepository, PgAdminRepository};
@@ -396,4 +397,83 @@ pub trait IdempotencyRepository: Send + Sync {
     /// Delete up to `limit` rows where `expires_at < now()`.
     /// Returns the number of rows actually deleted.
     async fn delete_expired(&self, limit: i64) -> Result<u64, DbError>;
+}
+
+/// A verification (OTP) lifecycle record.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Verification {
+    pub id: Uuid,
+    pub account_id: Uuid,
+    pub api_key_id: Uuid,
+    pub channel: String,
+    pub recipient: String,
+    pub status: String,
+    pub check_attempts: i32,
+    pub resend_attempts: i32,
+    pub cost_micro: i64,
+    pub cost_currency: String,
+    pub environment: String,
+    pub app_name: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Parameters for inserting a new verification.
+pub struct NewVerification {
+    pub account_id: Uuid,
+    pub api_key_id: Uuid,
+    pub channel: String,
+    pub recipient: String,
+    pub environment: String,
+    pub app_name: Option<String>,
+    pub initial_cost_micro: i64,
+}
+
+/// Verification lifecycle and counters.
+#[async_trait]
+pub trait VerificationRepository: Send + Sync {
+    /// Insert a new pending verification (expires_at = now() + 5 min).
+    async fn insert(&self, v: &NewVerification) -> Result<Verification, DbError>;
+
+    /// Find by id scoped to an account.
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+        account_id: Uuid,
+    ) -> Result<Option<Verification>, DbError>;
+
+    /// List for an account ordered by created_at DESC.
+    async fn list_by_account(
+        &self,
+        account_id: Uuid,
+        pagination: &Pagination,
+    ) -> Result<Vec<Verification>, DbError>;
+
+    /// Increment `check_attempts` atomically; returns the new count.
+    /// Errors with `NotFound` if status != 'pending'.
+    async fn increment_check_attempts(
+        &self,
+        id: Uuid,
+        account_id: Uuid,
+    ) -> Result<i32, DbError>;
+
+    /// Set status='approved' (only if currently pending). Returns NotFound otherwise.
+    async fn mark_approved(&self, id: Uuid, account_id: Uuid) -> Result<(), DbError>;
+
+    /// Set status='canceled' only if currently pending. Returns true on success.
+    async fn mark_canceled(&self, id: Uuid, account_id: Uuid) -> Result<bool, DbError>;
+
+    /// Atomic resend: increments resend_attempts, adds cost, resets check_attempts.
+    /// Errors with NotFound if not pending or resend cap reached.
+    async fn record_resend(
+        &self,
+        id: Uuid,
+        account_id: Uuid,
+        additional_cost_micro: i64,
+        max_resends: i32,
+    ) -> Result<Verification, DbError>;
+
+    /// Cleanup: bulk-mark expired pending rows. Returns count.
+    async fn expire_pending(&self, limit: i64) -> Result<u64, DbError>;
 }
