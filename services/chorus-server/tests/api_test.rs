@@ -14,9 +14,9 @@ use chorus_server::config::Config;
 use chorus_server::db::{
     Account, AccountRepository, AddSuppressionResult, ApiKey, ApiKeyRepository, DbError,
     DeliveryEvent, IdempotencyOutcome, IdempotencyRepository, Message, MessageRepository,
-    NewMessage, NewProviderConfig, NewSuppression, NewWebhook, Pagination, ProviderConfig,
-    ProviderConfigRepository, Suppression, SuppressionRepository, VerificationRepository,
-    Webhook, WebhookRepository,
+    NewMessage, NewProviderConfig, NewSuppression, NewVerification, NewWebhook, Pagination,
+    ProviderConfig, ProviderConfigRepository, Suppression, SuppressionRepository, Verification,
+    VerificationRepository, Webhook, WebhookRepository,
 };
 
 // ---------------------------------------------------------------------------
@@ -2331,4 +2331,267 @@ async fn idempotency_is_isolated_by_api_key() {
         v_b["error"]["code"], "recipient_suppressed",
         "same Idempotency-Key under a different api_key must not collide"
     );
+}
+
+// ----- B1 verification tests -----
+
+struct MemVerificationRepo {
+    rows: tokio::sync::Mutex<Vec<Verification>>,
+}
+
+impl MemVerificationRepo {
+    fn new() -> Self {
+        Self { rows: tokio::sync::Mutex::new(vec![]) }
+    }
+}
+
+#[async_trait]
+impl VerificationRepository for MemVerificationRepo {
+    async fn insert(&self, v: &NewVerification) -> Result<Verification, DbError> {
+        let now = Utc::now();
+        let row = Verification {
+            id: Uuid::new_v4(),
+            account_id: v.account_id,
+            api_key_id: v.api_key_id,
+            channel: v.channel.clone(),
+            recipient: v.recipient.clone(),
+            status: "pending".into(),
+            check_attempts: 0,
+            resend_attempts: 0,
+            cost_micro: v.initial_cost_micro,
+            cost_currency: "USD".into(),
+            environment: v.environment.clone(),
+            app_name: v.app_name.clone(),
+            created_at: now,
+            updated_at: now,
+            expires_at: now + chrono::Duration::seconds(300),
+        };
+        self.rows.lock().await.push(row.clone());
+        Ok(row)
+    }
+    async fn find_by_id(&self, id: Uuid, account_id: Uuid) -> Result<Option<Verification>, DbError> {
+        Ok(self.rows.lock().await.iter().find(|v| v.id == id && v.account_id == account_id).cloned())
+    }
+    async fn list_by_account(
+        &self,
+        account_id: Uuid,
+        pagination: &chorus_server::db::Pagination,
+    ) -> Result<Vec<Verification>, DbError> {
+        let rows = self.rows.lock().await;
+        Ok(rows.iter()
+            .filter(|v| v.account_id == account_id)
+            .skip(pagination.offset as usize)
+            .take(pagination.limit as usize)
+            .cloned()
+            .collect())
+    }
+    async fn increment_check_attempts(&self, id: Uuid, account_id: Uuid) -> Result<i32, DbError> {
+        let mut rows = self.rows.lock().await;
+        if let Some(v) = rows.iter_mut().find(|v| v.id == id && v.account_id == account_id && v.status == "pending") {
+            v.check_attempts += 1;
+            return Ok(v.check_attempts);
+        }
+        Err(DbError::NotFound)
+    }
+    async fn mark_approved(&self, id: Uuid, account_id: Uuid) -> Result<(), DbError> {
+        let mut rows = self.rows.lock().await;
+        if let Some(v) = rows.iter_mut().find(|v| v.id == id && v.account_id == account_id && v.status == "pending") {
+            v.status = "approved".into();
+            return Ok(());
+        }
+        Err(DbError::NotFound)
+    }
+    async fn mark_canceled(&self, id: Uuid, account_id: Uuid) -> Result<bool, DbError> {
+        let mut rows = self.rows.lock().await;
+        if let Some(v) = rows.iter_mut().find(|v| v.id == id && v.account_id == account_id && v.status == "pending") {
+            v.status = "canceled".into();
+            return Ok(true);
+        }
+        Ok(false)
+    }
+    async fn record_resend(
+        &self,
+        id: Uuid,
+        account_id: Uuid,
+        additional_cost_micro: i64,
+        max_resends: i32,
+    ) -> Result<Verification, DbError> {
+        let mut rows = self.rows.lock().await;
+        if let Some(v) = rows.iter_mut().find(|v|
+            v.id == id && v.account_id == account_id
+            && v.status == "pending" && v.resend_attempts < max_resends
+        ) {
+            v.resend_attempts += 1;
+            v.cost_micro += additional_cost_micro;
+            v.check_attempts = 0;
+            return Ok(v.clone());
+        }
+        Err(DbError::NotFound)
+    }
+    async fn expire_pending(&self, _limit: i64) -> Result<u64, DbError> { Ok(0) }
+}
+
+/// Build an AppState wired with both MemIdempotencyRepo and MemVerificationRepo.
+fn fixture_with_verification() -> (Arc<AppState>, Arc<MemVerificationRepo>) {
+    let key_hash = hex::encode(Sha256::digest(TEST_API_KEY.as_bytes()));
+    let account_id = Uuid::new_v4();
+    let key_id = Uuid::new_v4();
+    let account_repo = Arc::new(MockAccountRepo {
+        account: Account {
+            id: account_id, name: "Test".into(), owner_email: "t@t".into(),
+            is_active: true, created_at: Utc::now(), updated_at: Utc::now(),
+        },
+        api_key: ApiKey {
+            id: key_id, account_id, name: "k".into(), key_prefix: "ch_test_ab...".into(),
+            environment: "test".into(), last_used_at: None, expires_at: None,
+            is_revoked: false, created_at: Utc::now(),
+        },
+        key_hash,
+    });
+    let messages = Arc::new(MockMessageRepo::new());
+    let suppressions = Arc::new(MockSuppressionRepo::new());
+    let api_key_repo = Arc::new(MockApiKeyRepo);
+    let provider_config_repo = Arc::new(MockProviderConfigRepo);
+    let webhook_repo = Arc::new(MockWebhookRepo);
+    let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
+    let verification_repo: Arc<MemVerificationRepo> = Arc::new(MemVerificationRepo::new());
+    let verification_dyn: Arc<dyn VerificationRepository> = verification_repo.clone();
+    let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+    let config = Arc::new(Config::from_env());
+    let state = Arc::new(AppState::with_repos(
+        redis, config, account_repo, messages, api_key_repo,
+        provider_config_repo, webhook_repo, suppressions,
+        idempotency_repo, verification_dyn,
+    ));
+    (state, verification_repo)
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn create_verification_with_email_returns_201_with_email_channel() {
+    let (state, _repo) = fixture_with_verification();
+    let app = create_router(state);
+    let body = serde_json::json!({
+        "phone": "+66812345678",
+        "email": "alice@example.com",
+        "app_name": "Acme"
+    }).to_string();
+
+    let resp = app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/v1/verifications")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body))
+            .unwrap()
+    ).await.unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let v = response_body(resp).await;
+    assert_eq!(v["channel"], "email");
+    assert_eq!(v["recipient"], "alice@example.com");
+    assert_eq!(v["cost_micro"], 100);
+    assert_eq!(v["status"], "pending");
+}
+
+#[tokio::test]
+async fn create_verification_returns_400_when_no_recipient() {
+    let (state, _repo) = fixture_with_verification();
+    let app = create_router(state);
+    let resp = app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/v1/verifications")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from("{}"))
+            .unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let v = response_body(resp).await;
+    assert_eq!(v["error"]["code"], "no_recipient");
+}
+
+#[tokio::test]
+async fn create_verification_returns_400_when_invalid_phone() {
+    let (state, _repo) = fixture_with_verification();
+    let app = create_router(state);
+    let body = serde_json::json!({ "phone": "0812345678" }).to_string();
+    let resp = app.oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/v1/verifications")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body))
+            .unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response_body(resp).await["error"]["code"], "invalid_phone");
+}
+
+#[tokio::test]
+async fn create_verification_returns_422_when_no_eligible_channel() {
+    let (state, _repo) = fixture_with_verification();
+    let app = create_router(state.clone());
+    // Suppress both
+    let _ = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/suppressions")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"channel":"email","recipient":"alice@example.com"}"#))
+            .unwrap()
+    ).await.unwrap();
+    let _ = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/suppressions")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"channel":"sms","recipient":"+66812345678"}"#))
+            .unwrap()
+    ).await.unwrap();
+
+    let body = serde_json::json!({
+        "phone": "+66812345678",
+        "email": "alice@example.com",
+    }).to_string();
+    let resp = app.oneshot(
+        Request::builder().method("POST").uri("/v1/verifications")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body))
+            .unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response_body(resp).await["error"]["code"], "no_eligible_channel");
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn create_verification_falls_back_to_sms_when_email_suppressed() {
+    let (state, _repo) = fixture_with_verification();
+    let app = create_router(state);
+    let _ = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/suppressions")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"channel":"email","recipient":"alice@example.com"}"#))
+            .unwrap()
+    ).await.unwrap();
+    let body = serde_json::json!({
+        "phone": "+66812345678",
+        "email": "alice@example.com",
+    }).to_string();
+    let resp = app.oneshot(
+        Request::builder().method("POST").uri("/v1/verifications")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body))
+            .unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let v = response_body(resp).await;
+    assert_eq!(v["channel"], "sms");
+    assert_eq!(v["recipient"], "+66812345678");
+    assert_eq!(v["cost_micro"], 6000); // TH
 }

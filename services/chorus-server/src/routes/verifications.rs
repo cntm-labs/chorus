@@ -88,26 +88,9 @@ pub async fn create_verification(
         }
     };
 
-    // Rate limits — keyed on the eligible recipient. We pre-pick the rate-limit
-    // recipient as the *first* non-empty of email/phone (for hash stability).
-    let rl_recipient = req
-        .email
-        .as_deref()
-        .or(req.phone.as_deref())
-        .unwrap_or("");
-    if rl_recipient.is_empty() {
-        let (status, body) = error_json(StatusCode::BAD_REQUEST, "no_recipient", "phone or email required");
-        return idempotency::finalize_and_respond(&state, token, status, body).await;
-    }
-    let rl_hash = verification::hash_recipient(rl_recipient);
-    if let Err(e) =
-        verification::check_rate_limits(&state.redis, ctx.account_id, &rl_hash).await
-    {
-        return route_routing_error(&state, token, e).await;
-    }
-
-    // Smart routing.
-    let channels = req.channels.unwrap_or_default();
+    // Validate input (no_recipient, invalid format) before touching Redis so that
+    // format errors short-circuit with 400 without needing a Redis connection.
+    let channels = req.channels.clone().unwrap_or_default();
     let choice = match verification::select_channel(
         &state,
         ctx.account_id,
@@ -120,6 +103,14 @@ pub async fn create_verification(
         Ok(c) => c,
         Err(e) => return route_routing_error(&state, token, e).await,
     };
+
+    // Rate limits — keyed on the chosen recipient (after format validation).
+    let rl_hash = verification::hash_recipient(choice.recipient());
+    if let Err(e) =
+        verification::check_rate_limits(&state.redis, ctx.account_id, &rl_hash).await
+    {
+        return route_routing_error(&state, token, e).await;
+    }
 
     // Insert + Valkey + enqueue.
     let code = verification::generate_code();
