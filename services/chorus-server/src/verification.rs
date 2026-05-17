@@ -353,6 +353,24 @@ pub async fn select_channel(
     Err(RoutingError::NoEligibleChannel)
 }
 
+/// Background task: mark expired pending verifications.
+///
+/// Runs every 60 seconds, batches of up to 1000 rows. Logs info on activity.
+pub async fn expire_pending_loop(state: Arc<AppState>) {
+    const TICK: std::time::Duration = std::time::Duration::from_secs(60);
+    const BATCH: i64 = 1_000;
+    let mut tick = tokio::time::interval(TICK);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        match state.verification_repo().expire_pending(BATCH).await {
+            Ok(n) if n > 0 => tracing::info!(expired = n, "verifications expired"),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "verification expire failed"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
