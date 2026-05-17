@@ -2595,3 +2595,208 @@ async fn create_verification_falls_back_to_sms_when_email_suppressed() {
     assert_eq!(v["recipient"], "+66812345678");
     assert_eq!(v["cost_micro"], 6000); // TH
 }
+
+// helper: get the most recently created verification id from the in-memory repo
+async fn last_verification_id(repo: &Arc<MemVerificationRepo>) -> Uuid {
+    repo.rows.lock().await.last().expect("no verifications").id
+}
+
+// helper to seed a code into Valkey for /check tests (only useful when Valkey is running)
+async fn seed_pending_code(state: &Arc<AppState>, id: Uuid, code: &str) {
+    let _ = chorus_server::verification::store_code(&state.redis, id, "test", code).await;
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn check_with_correct_code_returns_approved() {
+    let (state, repo) = fixture_with_verification();
+    let app = create_router(state.clone());
+
+    let body = serde_json::json!({"email":"a@b.com"}).to_string();
+    let resp = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/verifications")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body)).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let id = last_verification_id(&repo).await;
+
+    seed_pending_code(&state, id, "999111").await;
+
+    let check_body = serde_json::json!({"code":"999111"}).to_string();
+    let resp = app.oneshot(
+        Request::builder().method("POST").uri(format!("/v1/verifications/{id}/check"))
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(check_body)).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(response_body(resp).await["status"], "approved");
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn check_with_wrong_code_returns_422_with_attempts_remaining() {
+    let (state, repo) = fixture_with_verification();
+    let app = create_router(state.clone());
+    let body = serde_json::json!({"email":"a@b.com"}).to_string();
+    let _ = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/verifications")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body)).unwrap()
+    ).await.unwrap();
+    let id = last_verification_id(&repo).await;
+    seed_pending_code(&state, id, "111222").await;
+
+    let resp = app.oneshot(
+        Request::builder().method("POST").uri(format!("/v1/verifications/{id}/check"))
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"code":"000000"}"#)).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let v = response_body(resp).await;
+    assert_eq!(v["error"]["code"], "incorrect_code");
+    assert_eq!(v["error"]["attempts_remaining"], 4);
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn cancel_pending_returns_canceled() {
+    let (state, repo) = fixture_with_verification();
+    let app = create_router(state);
+    let body = serde_json::json!({"email":"a@b.com"}).to_string();
+    let _ = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/verifications")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body)).unwrap()
+    ).await.unwrap();
+    let id = last_verification_id(&repo).await;
+
+    let resp = app.clone().oneshot(
+        Request::builder().method("POST").uri(format!("/v1/verifications/{id}/cancel"))
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .body(axum::body::Body::empty()).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(response_body(resp).await["status"], "canceled");
+
+    // Second cancel → 410
+    let resp = app.oneshot(
+        Request::builder().method("POST").uri(format!("/v1/verifications/{id}/cancel"))
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .body(axum::body::Body::empty()).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::GONE);
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn get_returns_verification_and_404_for_unknown() {
+    let (state, repo) = fixture_with_verification();
+    let app = create_router(state);
+    let body = serde_json::json!({"email":"a@b.com"}).to_string();
+    let _ = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/verifications")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body)).unwrap()
+    ).await.unwrap();
+    let id = last_verification_id(&repo).await;
+
+    let resp = app.clone().oneshot(
+        Request::builder().method("GET").uri(format!("/v1/verifications/{id}"))
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .body(axum::body::Body::empty()).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let other = Uuid::new_v4();
+    let resp = app.oneshot(
+        Request::builder().method("GET").uri(format!("/v1/verifications/{other}"))
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .body(axum::body::Body::empty()).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn list_paginates() {
+    let (state, _repo) = fixture_with_verification();
+    let app = create_router(state);
+    for i in 0..3 {
+        let body = serde_json::json!({"email": format!("u{i}@x.com")}).to_string();
+        let _ = app.clone().oneshot(
+            Request::builder().method("POST").uri("/v1/verifications")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body)).unwrap()
+        ).await.unwrap();
+    }
+    let resp = app.oneshot(
+        Request::builder().method("GET").uri("/v1/verifications?limit=2")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .body(axum::body::Body::empty()).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = response_body(resp).await;
+    assert_eq!(v["data"].as_array().unwrap().len(), 2);
+    assert_eq!(v["limit"], 2);
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn create_verification_idempotency_replay_is_identical() {
+    let (state, _repo) = fixture_with_verification();
+    let app = create_router(state);
+    let key = "verify-key-1";
+    let body = serde_json::json!({"email":"alice@example.com"}).to_string();
+
+    let resp1 = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/verifications")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("Idempotency-Key", key)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body.clone())).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp1.status(), StatusCode::CREATED);
+    let bytes1 = resp1.into_body().collect().await.unwrap().to_bytes();
+
+    let resp2 = app.oneshot(
+        Request::builder().method("POST").uri("/v1/verifications")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("Idempotency-Key", key)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body)).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp2.status(), StatusCode::CREATED);
+    let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(bytes1, bytes2);
+}
+
+#[tokio::test]
+async fn legacy_otp_send_still_works() {
+    // Regression — C1 idempotency wiring on /v1/otp/send must be intact.
+    let (state, _repo) = fixture_with_verification();
+    let app = create_router(state);
+    // Pre-suppress recipient to skip Redis enqueue (mirrors C1 test pattern).
+    let _ = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/suppressions")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"channel":"sms","recipient":"+66812345678"}"#))
+            .unwrap()
+    ).await.unwrap();
+    let resp = app.oneshot(
+        Request::builder().method("POST").uri("/v1/otp/send")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"to":"+66812345678"}"#)).unwrap()
+    ).await.unwrap();
+    // Legacy route returns 422 due to suppression — works as before.
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
