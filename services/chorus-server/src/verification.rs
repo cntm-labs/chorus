@@ -67,6 +67,82 @@ fn extract_country(e164: &str) -> &'static str {
     best
 }
 
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
+
+/// Result of an attempted code check.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CheckCodeOutcome {
+    /// Code matched; the Valkey entry has been deleted.
+    Match,
+    /// Code did not match. The entry remains until TTL or lockout.
+    Mismatch,
+    /// No entry exists for this id (TTL expired or already consumed/canceled).
+    Gone,
+}
+
+fn valkey_key(id: Uuid) -> String {
+    format!("verify:{id}")
+}
+
+/// Hash the recipient for use in keys and logs (avoid plaintext PII).
+pub fn hash_recipient(recipient: &str) -> String {
+    hex::encode(Sha256::digest(recipient.as_bytes()))
+}
+
+/// Store the code with TTL. Overwrites any previous entry (e.g. on resend).
+pub async fn store_code(
+    redis: &redis::Client,
+    id: Uuid,
+    recipient: &str,
+    code: &str,
+) -> anyhow::Result<()> {
+    let key = valkey_key(id);
+    let value = serde_json::json!({
+        "code": code,
+        "recipient_hash": hash_recipient(recipient),
+    });
+    let mut conn = redis.get_multiplexed_tokio_connection().await?;
+    redis::cmd("SET")
+        .arg(&key)
+        .arg(value.to_string())
+        .arg("EX")
+        .arg(TTL_SECONDS)
+        .query_async::<String>(&mut conn)
+        .await?;
+    Ok(())
+}
+
+/// Compare the provided code against the stored one.
+/// On `Match` the entry is deleted. On `Mismatch` the entry is left alone
+/// (caller increments the authoritative DB counter).
+pub async fn check_code(
+    redis: &redis::Client,
+    id: Uuid,
+    code: &str,
+) -> anyhow::Result<CheckCodeOutcome> {
+    let key = valkey_key(id);
+    let mut conn = redis.get_multiplexed_tokio_connection().await?;
+    let raw: Option<String> = redis::cmd("GET").arg(&key).query_async(&mut conn).await?;
+    let Some(raw) = raw else { return Ok(CheckCodeOutcome::Gone) };
+    let data: serde_json::Value = serde_json::from_str(&raw)?;
+    let stored = data["code"].as_str().unwrap_or("");
+    if stored == code {
+        redis::cmd("DEL").arg(&key).query_async::<i64>(&mut conn).await?;
+        Ok(CheckCodeOutcome::Match)
+    } else {
+        Ok(CheckCodeOutcome::Mismatch)
+    }
+}
+
+/// Delete the Valkey entry (used by cancel and lockout paths).
+pub async fn invalidate_code(redis: &redis::Client, id: Uuid) -> anyhow::Result<()> {
+    let key = valkey_key(id);
+    let mut conn = redis.get_multiplexed_tokio_connection().await?;
+    redis::cmd("DEL").arg(&key).query_async::<i64>(&mut conn).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
