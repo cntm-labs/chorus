@@ -11,4 +11,5 @@ pub mod otp;
 pub mod queue;
 pub mod routes;
 pub mod suppression;
+pub mod totp;
 pub mod verification;
