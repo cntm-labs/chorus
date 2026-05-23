@@ -420,6 +420,146 @@ pub async fn get_totp_status(
     (StatusCode::OK, Json(TotpUserPublic::from(&user, unused))).into_response()
 }
 
+const REGEN_PATH: &str = "/v1/totp/backup-codes/regenerate";
+
+#[derive(Deserialize)]
+pub struct RegenerateRequest {
+    pub user_id: String,
+}
+
+#[derive(Serialize)]
+pub struct RegenerateResponse {
+    pub user_id: String,
+    pub backup_codes: Vec<String>,
+    pub cost_micro: i64,
+}
+
+/// POST /v1/totp/backup-codes/regenerate
+pub async fn regenerate_backup_codes(
+    State(state): State<Arc<AppState>>,
+    ctx: AccountContext,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let token = match idempotency::begin(
+        &state, ctx.key_id, &headers, &Method::POST, REGEN_PATH, &body,
+    )
+    .await
+    {
+        IdempotencyAction::Skip => None,
+        IdempotencyAction::Proceed { token } => Some(token),
+        IdempotencyAction::Respond { status, body: b } => {
+            return idempotency::finalize_and_respond(&state, None, status, b).await
+        }
+    };
+
+    let req: RegenerateRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            let (s, b) = idempotency::bad_request(e.to_string());
+            return idempotency::finalize_and_respond(&state, token, s, b).await;
+        }
+    };
+    if !totp::is_valid_user_id(&req.user_id) {
+        let (s, b) = error_json(
+            StatusCode::BAD_REQUEST,
+            "invalid_user_id",
+            "user_id must be 1-255 ASCII printable characters",
+        );
+        return idempotency::finalize_and_respond(&state, token, s, b).await;
+    }
+    let user_id = req.user_id.trim().to_string();
+
+    let user_id_hash = totp::hash_user_id(&user_id);
+    if let Err(e) = totp::check_rate_limits(
+        &state.redis, ctx.account_id, &user_id_hash, RateLimitKind::Enroll,
+    )
+    .await
+    {
+        return route_totp_error(&state, token, e).await;
+    }
+
+    let user = match state.totp_repo().find(ctx.account_id, &user_id).await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            let (s, b) = error_json(StatusCode::NOT_FOUND, "not_found", "user not enrolled");
+            return idempotency::finalize_and_respond(&state, token, s, b).await;
+        }
+        Err(e) => {
+            let (s, b) = idempotency::internal_error(e.to_string());
+            return idempotency::finalize_and_respond(&state, token, s, b).await;
+        }
+    };
+    if user.status != "active" {
+        let (s, b) = error_json(StatusCode::GONE, "not_active", "user is not active");
+        return idempotency::finalize_and_respond(&state, token, s, b).await;
+    }
+
+    let new_plaintext = totp::generate_backup_codes();
+    let new_hashes: Vec<Vec<u8>> =
+        new_plaintext.iter().map(|c| totp::hash_backup_code(c)).collect();
+    if let Err(e) = state
+        .totp_repo()
+        .replace_backup_codes(ctx.account_id, &user_id, &new_hashes)
+        .await
+    {
+        let (s, b) = idempotency::internal_error(e.to_string());
+        return idempotency::finalize_and_respond(&state, token, s, b).await;
+    }
+
+    let response = RegenerateResponse {
+        user_id: user_id.clone(),
+        backup_codes: new_plaintext,
+        cost_micro: 0,
+    };
+    let bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_default());
+    idempotency::finalize_and_respond(&state, token, StatusCode::OK, bytes).await
+}
+
+/// GET /v1/totp/{user_id}/qr — raw image/png response
+pub async fn get_totp_qr(
+    State(state): State<Arc<AppState>>,
+    ctx: AccountContext,
+    Path(user_id): Path<String>,
+) -> Response {
+    if !totp::is_valid_user_id(&user_id) {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_user_id",
+            "user_id must be 1-255 ASCII printable characters",
+        );
+    }
+    let user_id = user_id.trim();
+    let user = match state.totp_repo().find(ctx.account_id, user_id).await {
+        Ok(Some(u)) => u,
+        Ok(None) => return error_response(StatusCode::NOT_FOUND, "not_found", "user not enrolled"),
+        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+    };
+    if user.status == "disabled" {
+        return error_response(StatusCode::NOT_FOUND, "not_found", "user not enrolled");
+    }
+    let secret = match state.encryptor().decrypt(&user.secret) {
+        Ok(s) => s,
+        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+    };
+    let issuer = user.issuer.clone().unwrap_or_else(|| "Chorus".to_string());
+    let label = user.label.clone().unwrap_or_else(|| user.user_id.clone());
+    let otpauth = totp::build_otpauth_uri(&issuer, &label, &totp::base32_no_pad(&secret));
+    let png_data_uri = match totp::qr_png_data_uri(&otpauth) {
+        Ok(s) => s,
+        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+    };
+    use base64::Engine;
+    let b64 = png_data_uri.strip_prefix("data:image/png;base64,").unwrap_or("");
+    let png_bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap_or_default();
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "image/png")],
+        png_bytes,
+    )
+        .into_response()
+}
+
 // ---- internal helpers ----
 
 fn unix_now() -> u64 {

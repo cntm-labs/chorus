@@ -301,6 +301,11 @@ pub fn create_router_with_metrics(
             "/v1/totp/{user_id}",
             get(routes::totp::get_totp_status).delete(routes::totp::disenroll_totp),
         )
+        .route(
+            "/v1/totp/backup-codes/regenerate",
+            post(routes::totp::regenerate_backup_codes),
+        )
+        .route("/v1/totp/{user_id}/qr", get(routes::totp::get_totp_qr))
         .with_state(state)
         .layer(axum_middleware::from_fn(crate::middleware::metrics::track))
         .layer(axum_middleware::from_fn(
