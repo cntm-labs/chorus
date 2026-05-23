@@ -114,7 +114,9 @@ impl TotpRepository for NullTotpRepo {
         _new_user: &NewTotpUser,
         _hashes: &[Vec<u8>],
     ) -> Result<TotpUser, DbError> {
-        Err(DbError::Internal(anyhow::anyhow!("NullTotpRepo::enroll not implemented")))
+        Err(DbError::Internal(anyhow::anyhow!(
+            "NullTotpRepo::enroll not implemented"
+        )))
     }
     async fn find(&self, _account_id: Uuid, _user_id: &str) -> Result<Option<TotpUser>, DbError> {
         Ok(None)
@@ -122,11 +124,7 @@ impl TotpRepository for NullTotpRepo {
     async fn activate(&self, _account_id: Uuid, _user_id: &str) -> Result<(), DbError> {
         Err(DbError::NotFound)
     }
-    async fn touch_last_verified(
-        &self,
-        _account_id: Uuid,
-        _user_id: &str,
-    ) -> Result<(), DbError> {
+    async fn touch_last_verified(&self, _account_id: Uuid, _user_id: &str) -> Result<(), DbError> {
         Ok(())
     }
     async fn disenroll(&self, _account_id: Uuid, _user_id: &str) -> Result<bool, DbError> {
@@ -3089,9 +3087,13 @@ async fn legacy_otp_send_still_works() {
 
 // ----- B2 TOTP tests -----
 
+/// One row of the in-memory backup-codes table:
+/// (account_id, user_id, code_hash, used_at).
+type MemBackupCodeRow = (Uuid, String, Vec<u8>, Option<chrono::DateTime<Utc>>);
+
 struct MemTotpRepo {
     users: tokio::sync::Mutex<Vec<TotpUser>>,
-    codes: tokio::sync::Mutex<Vec<(Uuid, String, Vec<u8>, Option<chrono::DateTime<Utc>>)>>,
+    codes: tokio::sync::Mutex<Vec<MemBackupCodeRow>>,
 }
 
 impl MemTotpRepo {
@@ -3111,7 +3113,10 @@ impl TotpRepository for MemTotpRepo {
         hashes: &[Vec<u8>],
     ) -> Result<TotpUser, DbError> {
         let mut users = self.users.lock().await;
-        if users.iter().any(|u| u.account_id == new_user.account_id && u.user_id == new_user.user_id) {
+        if users
+            .iter()
+            .any(|u| u.account_id == new_user.account_id && u.user_id == new_user.user_id)
+        {
             return Err(DbError::Internal(anyhow::anyhow!("duplicate")));
         }
         let now = Utc::now();
@@ -3133,7 +3138,12 @@ impl TotpRepository for MemTotpRepo {
         users.push(u.clone());
         let mut codes = self.codes.lock().await;
         for h in hashes {
-            codes.push((new_user.account_id, new_user.user_id.clone(), h.clone(), None));
+            codes.push((
+                new_user.account_id,
+                new_user.user_id.clone(),
+                h.clone(),
+                None,
+            ));
         }
         Ok(u)
     }
@@ -3161,11 +3171,7 @@ impl TotpRepository for MemTotpRepo {
         Err(DbError::NotFound)
     }
 
-    async fn touch_last_verified(
-        &self,
-        account_id: Uuid,
-        user_id: &str,
-    ) -> Result<(), DbError> {
+    async fn touch_last_verified(&self, account_id: Uuid, user_id: &str) -> Result<(), DbError> {
         let mut users = self.users.lock().await;
         if let Some(u) = users
             .iter_mut()
@@ -3238,13 +3244,23 @@ fn fixture_with_totp() -> (Arc<AppState>, Arc<MemTotpRepo>) {
     let key_id = Uuid::new_v4();
     let account_repo = Arc::new(MockAccountRepo {
         account: Account {
-            id: account_id, name: "Test".into(), owner_email: "t@t".into(),
-            is_active: true, created_at: Utc::now(), updated_at: Utc::now(),
+            id: account_id,
+            name: "Test".into(),
+            owner_email: "t@t".into(),
+            is_active: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         },
         api_key: ApiKey {
-            id: key_id, account_id, name: "k".into(), key_prefix: "ch_test_ab...".into(),
-            environment: "test".into(), last_used_at: None, expires_at: None,
-            is_revoked: false, created_at: Utc::now(),
+            id: key_id,
+            account_id,
+            name: "k".into(),
+            key_prefix: "ch_test_ab...".into(),
+            environment: "test".into(),
+            last_used_at: None,
+            expires_at: None,
+            is_revoked: false,
+            created_at: Utc::now(),
         },
         key_hash,
     });
@@ -3261,9 +3277,18 @@ fn fixture_with_totp() -> (Arc<AppState>, Arc<MemTotpRepo>) {
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
     let config = Arc::new(Config::from_env());
     let state = Arc::new(AppState::with_repos(
-        redis, config, account_repo, messages, api_key_repo,
-        provider_config_repo, webhook_repo, suppressions,
-        idempotency_repo, verification_repo, totp_dyn, encryptor,
+        redis,
+        config,
+        account_repo,
+        messages,
+        api_key_repo,
+        provider_config_repo,
+        webhook_repo,
+        suppressions,
+        idempotency_repo,
+        verification_repo,
+        totp_dyn,
+        encryptor,
     ));
     (state, totp_repo)
 }
@@ -3290,8 +3315,14 @@ async fn enroll_returns_qr_and_pending_status() {
     let v = response_body(resp).await;
     assert_eq!(v["user_id"], "alice@app.com");
     assert_eq!(v["status"], "pending");
-    assert!(v["otpauth_uri"].as_str().unwrap().starts_with("otpauth://totp/"));
-    assert!(v["qr_code_png"].as_str().unwrap().starts_with("data:image/png;base64,"));
+    assert!(v["otpauth_uri"]
+        .as_str()
+        .unwrap()
+        .starts_with("otpauth://totp/"));
+    assert!(v["qr_code_png"]
+        .as_str()
+        .unwrap()
+        .starts_with("data:image/png;base64,"));
     assert_eq!(v["backup_codes"].as_array().unwrap().len(), 10);
     assert_eq!(v["cost_micro"], 0);
 }
@@ -3303,7 +3334,8 @@ async fn enroll_returns_400_when_user_id_empty() {
     let resp = app
         .oneshot(
             Request::builder()
-                .method("POST").uri("/v1/totp/enroll")
+                .method("POST")
+                .uri("/v1/totp/enroll")
                 .header("authorization", format!("Bearer {TEST_API_KEY}"))
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(r#"{"user_id":""}"#))
@@ -3312,7 +3344,10 @@ async fn enroll_returns_400_when_user_id_empty() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(response_body(resp).await["error"]["code"], "invalid_user_id");
+    assert_eq!(
+        response_body(resp).await["error"]["code"],
+        "invalid_user_id"
+    );
 }
 
 #[tokio::test]
@@ -3324,7 +3359,8 @@ async fn enroll_returns_400_when_user_id_too_long() {
     let resp = app
         .oneshot(
             Request::builder()
-                .method("POST").uri("/v1/totp/enroll")
+                .method("POST")
+                .uri("/v1/totp/enroll")
                 .header("authorization", format!("Bearer {TEST_API_KEY}"))
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(body))
@@ -3341,21 +3377,37 @@ async fn enroll_returns_409_when_user_already_enrolled() {
     let (state, _repo) = fixture_with_totp();
     let app = create_router(state);
     let body = serde_json::json!({"user_id":"alice"}).to_string();
-    let _ = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/totp/enroll")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body.clone())).unwrap()
-    ).await.unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
-    let resp = app.oneshot(
-        Request::builder().method("POST").uri("/v1/totp/enroll")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body)).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
-    assert_eq!(response_body(resp).await["error"]["code"], "already_enrolled");
+    assert_eq!(
+        response_body(resp).await["error"]["code"],
+        "already_enrolled"
+    );
 }
 
 #[tokio::test]
@@ -3366,23 +3418,36 @@ async fn enroll_idempotency_replay_is_identical() {
     let key = "enroll-key-1";
     let body = serde_json::json!({"user_id":"bob"}).to_string();
 
-    let resp1 = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/totp/enroll")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("Idempotency-Key", key)
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body.clone())).unwrap()
-    ).await.unwrap();
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp1.status(), StatusCode::CREATED);
     let bytes1 = resp1.into_body().collect().await.unwrap().to_bytes();
 
-    let resp2 = app.oneshot(
-        Request::builder().method("POST").uri("/v1/totp/enroll")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("Idempotency-Key", key)
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body)).unwrap()
-    ).await.unwrap();
+    let resp2 = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp2.status(), StatusCode::CREATED);
     let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(bytes1, bytes2);
@@ -3395,12 +3460,16 @@ async fn activate_returns_404_when_unknown_user() {
     let body = serde_json::json!({"user_id":"ghost","code":"123456"}).to_string();
     let resp = app
         .oneshot(
-            Request::builder().method("POST").uri("/v1/totp/activate")
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/activate")
                 .header("authorization", format!("Bearer {TEST_API_KEY}"))
                 .header("content-type", "application/json")
-                .body(axum::body::Body::from(body)).unwrap(),
+                .body(axum::body::Body::from(body))
+                .unwrap(),
         )
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
@@ -3410,25 +3479,45 @@ async fn disenroll_active_user_succeeds_and_second_call_returns_410() {
     let (state, _repo) = fixture_with_totp();
     let app = create_router(state);
     let body = serde_json::json!({"user_id":"alice"}).to_string();
-    let _ = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/totp/enroll")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body)).unwrap()
-    ).await.unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
-    let resp = app.clone().oneshot(
-        Request::builder().method("DELETE").uri("/v1/totp/alice")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .body(axum::body::Body::empty()).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/totp/alice")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let resp = app.oneshot(
-        Request::builder().method("DELETE").uri("/v1/totp/alice")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .body(axum::body::Body::empty()).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/totp/alice")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::GONE);
 }
 
@@ -3436,11 +3525,17 @@ async fn disenroll_active_user_succeeds_and_second_call_returns_410() {
 async fn status_for_unknown_user_returns_404() {
     let (state, _repo) = fixture_with_totp();
     let app = create_router(state);
-    let resp = app.oneshot(
-        Request::builder().method("GET").uri("/v1/totp/ghost")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .body(axum::body::Body::empty()).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/totp/ghost")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
@@ -3449,19 +3544,31 @@ async fn status_for_unknown_user_returns_404() {
 async fn status_for_pending_user_returns_metadata() {
     let (state, _repo) = fixture_with_totp();
     let app = create_router(state);
-    let _ = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/totp/enroll")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(r#"{"user_id":"alice"}"#))
-            .unwrap()
-    ).await.unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"user_id":"alice"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
-    let resp = app.oneshot(
-        Request::builder().method("GET").uri("/v1/totp/alice")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .body(axum::body::Body::empty()).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/totp/alice")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let v = response_body(resp).await;
     assert_eq!(v["user_id"], "alice");
@@ -3476,12 +3583,18 @@ async fn verify_returns_404_when_unknown_user() {
     let app = create_router(state);
     // No enrollment exists → find returns None → 404
     let body = serde_json::json!({"user_id":"ghost","code":"483921"}).to_string();
-    let resp = app.oneshot(
-        Request::builder().method("POST").uri("/v1/totp/verify")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body)).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/verify")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
@@ -3490,12 +3603,19 @@ async fn verify_returns_404_when_unknown_user() {
 async fn verify_with_backup_code_consumes_one() {
     let (state, repo) = fixture_with_totp();
     let app = create_router(state);
-    let resp = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/totp/enroll")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(r#"{"user_id":"alice"}"#)).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"user_id":"alice"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let v = response_body(resp).await;
     let backup0 = v["backup_codes"][0].as_str().unwrap().to_string();
 
@@ -3503,17 +3623,26 @@ async fn verify_with_backup_code_consumes_one() {
     {
         let mut users = repo.users.lock().await;
         for x in users.iter_mut() {
-            if x.user_id == "alice" { x.status = "active".into(); }
+            if x.user_id == "alice" {
+                x.status = "active".into();
+            }
         }
     }
 
     let body = serde_json::json!({"user_id":"alice","code":backup0}).to_string();
-    let resp = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/totp/verify")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body.clone())).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/verify")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let v = response_body(resp).await;
     assert_eq!(v["verified"], true);
@@ -3521,12 +3650,18 @@ async fn verify_with_backup_code_consumes_one() {
     assert_eq!(v["cost_micro"], 0);
 
     // Replay same backup code → 422 incorrect_code
-    let resp = app.oneshot(
-        Request::builder().method("POST").uri("/v1/totp/verify")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body)).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/verify")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(response_body(resp).await["error"]["code"], "incorrect_code");
 }
@@ -3536,12 +3671,19 @@ async fn verify_with_backup_code_consumes_one() {
 async fn regenerate_returns_new_backup_codes_and_invalidates_old() {
     let (state, repo) = fixture_with_totp();
     let app = create_router(state);
-    let resp = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/totp/enroll")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(r#"{"user_id":"alice"}"#)).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"user_id":"alice"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let v = response_body(resp).await;
     let old_first = v["backup_codes"][0].as_str().unwrap().to_string();
 
@@ -3549,16 +3691,25 @@ async fn regenerate_returns_new_backup_codes_and_invalidates_old() {
     {
         let mut users = repo.users.lock().await;
         for x in users.iter_mut() {
-            if x.user_id == "alice" { x.status = "active".into(); }
+            if x.user_id == "alice" {
+                x.status = "active".into();
+            }
         }
     }
 
-    let resp = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/totp/backup-codes/regenerate")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(r#"{"user_id":"alice"}"#)).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/backup-codes/regenerate")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"user_id":"alice"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let v = response_body(resp).await;
     let new_codes = v["backup_codes"].as_array().unwrap();
@@ -3567,12 +3718,18 @@ async fn regenerate_returns_new_backup_codes_and_invalidates_old() {
 
     // Old code now invalid → 422
     let body = serde_json::json!({"user_id":"alice","code":old_first}).to_string();
-    let resp = app.oneshot(
-        Request::builder().method("POST").uri("/v1/totp/verify")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(body)).unwrap()
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/verify")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
@@ -3581,27 +3738,43 @@ async fn regenerate_returns_new_backup_codes_and_invalidates_old() {
 async fn rate_limit_per_user_blocks_after_5_verifies() {
     let (state, repo) = fixture_with_totp();
     let app = create_router(state);
-    let _ = app.clone().oneshot(
-        Request::builder().method("POST").uri("/v1/totp/enroll")
-            .header("authorization", format!("Bearer {TEST_API_KEY}"))
-            .header("content-type", "application/json")
-            .body(axum::body::Body::from(r#"{"user_id":"alice"}"#)).unwrap()
-    ).await.unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"user_id":"alice"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     {
         let mut users = repo.users.lock().await;
         for x in users.iter_mut() {
-            if x.user_id == "alice" { x.status = "active".into(); }
+            if x.user_id == "alice" {
+                x.status = "active".into();
+            }
         }
     }
     let body = serde_json::json!({"user_id":"alice","code":"000000"}).to_string();
     let mut codes_seen = vec![];
     for _ in 0..6 {
-        let resp = app.clone().oneshot(
-            Request::builder().method("POST").uri("/v1/totp/verify")
-                .header("authorization", format!("Bearer {TEST_API_KEY}"))
-                .header("content-type", "application/json")
-                .body(axum::body::Body::from(body.clone())).unwrap()
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/totp/verify")
+                    .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         codes_seen.push(resp.status().as_u16());
     }
     // First 5: 422 incorrect_code; 6th: 429 rate_limited

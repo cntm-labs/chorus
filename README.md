@@ -89,6 +89,32 @@ sdks/
 └── c/                   # C11 with libcurl (libchorus)
 ```
 
+## Configuration
+
+### `CHORUS_ENCRYPTION_KEY` (required for TOTP)
+
+chorus-server encrypts TOTP secrets at rest with AES-GCM-256. The
+key is sourced from the env var `CHORUS_ENCRYPTION_KEY` and must
+decode to exactly 32 bytes. Required at startup; the server panics
+if missing or malformed.
+
+Generate a development key:
+
+```sh
+head -c 32 /dev/urandom | base64
+```
+
+Set it in your local `.env` (or shell):
+
+```sh
+export CHORUS_ENCRYPTION_KEY="<base64 of 32 bytes>"
+```
+
+For production deployments, source the key from your secret manager
+(AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault, etc.).
+Rotating the key is **not yet supported** — track follow-up B2.2 in
+the roadmap.
+
 ## Development
 
 ```sh

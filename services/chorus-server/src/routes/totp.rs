@@ -90,8 +90,7 @@ pub async fn enroll_totp(
 ) -> Response {
     let start = std::time::Instant::now();
     let response = enroll_totp_inner(state, ctx, headers, body).await;
-    metrics::histogram!(totp::metrics_keys::ENROLL_DURATION)
-        .record(start.elapsed().as_secs_f64());
+    metrics::histogram!(totp::metrics_keys::ENROLL_DURATION).record(start.elapsed().as_secs_f64());
     response
 }
 
@@ -102,7 +101,12 @@ async fn enroll_totp_inner(
     body: Bytes,
 ) -> Response {
     let token = match idempotency::begin(
-        &state, ctx.key_id, &headers, &Method::POST, ENROLL_PATH, &body,
+        &state,
+        ctx.key_id,
+        &headers,
+        &Method::POST,
+        ENROLL_PATH,
+        &body,
     )
     .await
     {
@@ -132,9 +136,13 @@ async fn enroll_totp_inner(
     let user_id = req.user_id.trim().to_string();
 
     let user_id_hash = totp::hash_user_id(&user_id);
-    if let Err(e) =
-        totp::check_rate_limits(&state.redis, ctx.account_id, &user_id_hash, RateLimitKind::Enroll)
-            .await
+    if let Err(e) = totp::check_rate_limits(
+        &state.redis,
+        ctx.account_id,
+        &user_id_hash,
+        RateLimitKind::Enroll,
+    )
+    .await
     {
         return route_totp_error(&state, token, e).await;
     }
@@ -173,8 +181,10 @@ async fn enroll_totp_inner(
         }
     };
     let backup_plaintext = totp::generate_backup_codes();
-    let backup_hashes: Vec<Vec<u8>> =
-        backup_plaintext.iter().map(|c| totp::hash_backup_code(c)).collect();
+    let backup_hashes: Vec<Vec<u8>> = backup_plaintext
+        .iter()
+        .map(|c| totp::hash_backup_code(c))
+        .collect();
 
     let issuer = req.issuer.clone();
     let label = req.label.clone();
@@ -253,7 +263,10 @@ pub async fn activate_totp(
     let user_id_hash = totp::hash_user_id(user_id);
 
     if let Err(e) = totp::check_rate_limits(
-        &state.redis, ctx.account_id, &user_id_hash, RateLimitKind::Activate,
+        &state.redis,
+        ctx.account_id,
+        &user_id_hash,
+        RateLimitKind::Activate,
     )
     .await
     {
@@ -263,23 +276,47 @@ pub async fn activate_totp(
     let user = match state.totp_repo().find(ctx.account_id, user_id).await {
         Ok(Some(u)) => u,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "not_found", "user not enrolled"),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            )
+        }
     };
     if user.status != "pending" {
-        return error_response(StatusCode::GONE, "not_pending", "user is not pending activation");
+        return error_response(
+            StatusCode::GONE,
+            "not_pending",
+            "user is not pending activation",
+        );
     }
 
     let secret = match state.encryptor().decrypt(&user.secret) {
         Ok(s) => s,
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            )
+        }
     };
     let now = unix_now();
     if !totp::verify_totp_with_window(&secret, now, &req.code) {
-        return error_response(StatusCode::UNPROCESSABLE_ENTITY, "incorrect_code", "code did not match");
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "incorrect_code",
+            "code did not match",
+        );
     }
 
     if let Err(e) = state.totp_repo().activate(ctx.account_id, user_id).await {
-        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string());
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        );
     }
     let user = match state.totp_repo().find(ctx.account_id, user_id).await {
         Ok(Some(u)) => u,
@@ -301,8 +338,7 @@ pub async fn verify_totp(
 ) -> Response {
     let start = std::time::Instant::now();
     let response = verify_totp_inner(state, ctx, req).await;
-    metrics::histogram!(totp::metrics_keys::VERIFY_DURATION)
-        .record(start.elapsed().as_secs_f64());
+    metrics::histogram!(totp::metrics_keys::VERIFY_DURATION).record(start.elapsed().as_secs_f64());
     response
 }
 
@@ -322,7 +358,10 @@ async fn verify_totp_inner(
     let user_id_hash = totp::hash_user_id(user_id);
 
     if let Err(e) = totp::check_rate_limits(
-        &state.redis, ctx.account_id, &user_id_hash, RateLimitKind::Verify,
+        &state.redis,
+        ctx.account_id,
+        &user_id_hash,
+        RateLimitKind::Verify,
     )
     .await
     {
@@ -332,7 +371,13 @@ async fn verify_totp_inner(
     let user = match state.totp_repo().find(ctx.account_id, user_id).await {
         Ok(Some(u)) => u,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "not_found", "user not enrolled"),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            )
+        }
     };
     if user.status != "active" {
         return error_response(StatusCode::GONE, "not_active", "user is not active");
@@ -346,17 +391,31 @@ async fn verify_totp_inner(
             .await
         {
             Ok(v) => v,
-            Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+            Err(e) => {
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    &e.to_string(),
+                )
+            }
         };
         if !ok {
             metrics::counter!(
                 totp::metrics_keys::VERIFIES_TOTAL,
                 "outcome" => "wrong_code",
                 "method" => "backup_code"
-            ).increment(1);
-            return error_response(StatusCode::UNPROCESSABLE_ENTITY, "incorrect_code", "code did not match");
+            )
+            .increment(1);
+            return error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "incorrect_code",
+                "code did not match",
+            );
         }
-        let _ = state.totp_repo().touch_last_verified(ctx.account_id, user_id).await;
+        let _ = state
+            .totp_repo()
+            .touch_last_verified(ctx.account_id, user_id)
+            .await;
         let unused = state
             .totp_repo()
             .unused_backup_codes_count(ctx.account_id, user_id)
@@ -366,7 +425,8 @@ async fn verify_totp_inner(
             totp::metrics_keys::VERIFIES_TOTAL,
             "outcome" => "approved",
             "method" => "backup_code"
-        ).increment(1);
+        )
+        .increment(1);
         metrics::gauge!(totp::metrics_keys::BACKUP_REMAINING).set(unused as f64);
         return Json(VerifyResponse {
             user_id: user.user_id.clone(),
@@ -381,7 +441,13 @@ async fn verify_totp_inner(
 
     let secret = match state.encryptor().decrypt(&user.secret) {
         Ok(s) => s,
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            )
+        }
     };
     let now = unix_now();
     if !totp::verify_totp_with_window(&secret, now, &req.code) {
@@ -389,10 +455,18 @@ async fn verify_totp_inner(
             totp::metrics_keys::VERIFIES_TOTAL,
             "outcome" => "wrong_code",
             "method" => "totp"
-        ).increment(1);
-        return error_response(StatusCode::UNPROCESSABLE_ENTITY, "incorrect_code", "code did not match");
+        )
+        .increment(1);
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "incorrect_code",
+            "code did not match",
+        );
     }
-    let _ = state.totp_repo().touch_last_verified(ctx.account_id, user_id).await;
+    let _ = state
+        .totp_repo()
+        .touch_last_verified(ctx.account_id, user_id)
+        .await;
     let unused = state
         .totp_repo()
         .unused_backup_codes_count(ctx.account_id, user_id)
@@ -402,7 +476,8 @@ async fn verify_totp_inner(
         totp::metrics_keys::VERIFIES_TOTAL,
         "outcome" => "approved",
         "method" => "totp"
-    ).increment(1);
+    )
+    .increment(1);
     metrics::gauge!(totp::metrics_keys::BACKUP_REMAINING).set(unused as f64);
     Json(VerifyResponse {
         user_id: user.user_id.clone(),
@@ -428,7 +503,11 @@ pub async fn disenroll_totp(
             "user_id must be 1-255 ASCII printable characters",
         );
     }
-    match state.totp_repo().disenroll(ctx.account_id, user_id.trim()).await {
+    match state
+        .totp_repo()
+        .disenroll(ctx.account_id, user_id.trim())
+        .await
+    {
         Ok(true) => {
             let body = serde_json::json!({"user_id": user_id, "status": "disabled"});
             (StatusCode::OK, Json(body)).into_response()
@@ -438,7 +517,11 @@ pub async fn disenroll_totp(
             "not_found_or_already_disabled",
             "no active TOTP enrollment found",
         ),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -459,7 +542,13 @@ pub async fn get_totp_status(
     let user = match state.totp_repo().find(ctx.account_id, user_id).await {
         Ok(Some(u)) => u,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "not_found", "user not enrolled"),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            )
+        }
     };
     let unused = state
         .totp_repo()
@@ -491,7 +580,12 @@ pub async fn regenerate_backup_codes(
     body: Bytes,
 ) -> Response {
     let token = match idempotency::begin(
-        &state, ctx.key_id, &headers, &Method::POST, REGEN_PATH, &body,
+        &state,
+        ctx.key_id,
+        &headers,
+        &Method::POST,
+        REGEN_PATH,
+        &body,
     )
     .await
     {
@@ -521,7 +615,10 @@ pub async fn regenerate_backup_codes(
 
     let user_id_hash = totp::hash_user_id(&user_id);
     if let Err(e) = totp::check_rate_limits(
-        &state.redis, ctx.account_id, &user_id_hash, RateLimitKind::Enroll,
+        &state.redis,
+        ctx.account_id,
+        &user_id_hash,
+        RateLimitKind::Enroll,
     )
     .await
     {
@@ -545,8 +642,10 @@ pub async fn regenerate_backup_codes(
     }
 
     let new_plaintext = totp::generate_backup_codes();
-    let new_hashes: Vec<Vec<u8>> =
-        new_plaintext.iter().map(|c| totp::hash_backup_code(c)).collect();
+    let new_hashes: Vec<Vec<u8>> = new_plaintext
+        .iter()
+        .map(|c| totp::hash_backup_code(c))
+        .collect();
     if let Err(e) = state
         .totp_repo()
         .replace_backup_codes(ctx.account_id, &user_id, &new_hashes)
@@ -582,25 +681,47 @@ pub async fn get_totp_qr(
     let user = match state.totp_repo().find(ctx.account_id, user_id).await {
         Ok(Some(u)) => u,
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "not_found", "user not enrolled"),
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            )
+        }
     };
     if user.status == "disabled" {
         return error_response(StatusCode::NOT_FOUND, "not_found", "user not enrolled");
     }
     let secret = match state.encryptor().decrypt(&user.secret) {
         Ok(s) => s,
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            )
+        }
     };
     let issuer = user.issuer.clone().unwrap_or_else(|| "Chorus".to_string());
     let label = user.label.clone().unwrap_or_else(|| user.user_id.clone());
     let otpauth = totp::build_otpauth_uri(&issuer, &label, &totp::base32_no_pad(&secret));
     let png_data_uri = match totp::qr_png_data_uri(&otpauth) {
         Ok(s) => s,
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            )
+        }
     };
     use base64::Engine;
-    let b64 = png_data_uri.strip_prefix("data:image/png;base64,").unwrap_or("");
-    let png_bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap_or_default();
+    let b64 = png_data_uri
+        .strip_prefix("data:image/png;base64,")
+        .unwrap_or("");
+    let png_bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .unwrap_or_default();
     (
         StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "image/png")],
@@ -626,7 +747,10 @@ fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
 
 fn error_json(status: StatusCode, code: &str, message: &str) -> (StatusCode, Bytes) {
     let body = serde_json::json!({ "error": { "code": code, "message": message } });
-    (status, Bytes::from(serde_json::to_vec(&body).unwrap_or_default()))
+    (
+        status,
+        Bytes::from(serde_json::to_vec(&body).unwrap_or_default()),
+    )
 }
 
 async fn route_totp_error(
@@ -647,7 +771,8 @@ async fn route_totp_error(
             }
             let mut resp = (s, b).into_response();
             if let Ok(v) = HeaderValue::from_str(&retry_after_sec.to_string()) {
-                resp.headers_mut().insert(axum::http::header::RETRY_AFTER, v);
+                resp.headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, v);
             }
             resp
         }
@@ -665,9 +790,11 @@ async fn route_totp_error(
         | TotpError::NotFound
         | TotpError::NotPending
         | TotpError::NotActive
-        | TotpError::IncorrectCode => {
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", "unexpected TotpError variant")
-        }
+        | TotpError::IncorrectCode => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "unexpected TotpError variant",
+        ),
     }
 }
 
@@ -681,12 +808,25 @@ fn route_totp_error_plain(err: TotpError) -> Response {
                 "TOTP rate limit exceeded",
             );
             if let Ok(v) = HeaderValue::from_str(&retry_after_sec.to_string()) {
-                resp.headers_mut().insert(axum::http::header::RETRY_AFTER, v);
+                resp.headers_mut()
+                    .insert(axum::http::header::RETRY_AFTER, v);
             }
             resp
         }
-        TotpError::Db(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
-        TotpError::Internal(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
-        _ => error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", "unexpected TotpError variant"),
+        TotpError::Db(e) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
+        TotpError::Internal(e) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
+        _ => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "unexpected TotpError variant",
+        ),
     }
 }

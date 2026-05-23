@@ -6,15 +6,15 @@ use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::config::Config;
+use crate::crypto::Encryptor;
 use crate::db::billing::{BillingRepository, PgBillingRepository};
 use crate::db::idempotency::PgIdempotencyRepository;
 use crate::db::postgres::PgRepository;
 use crate::db::provider_config::PgProviderConfigRepository;
 use crate::db::suppression::PgSuppressionRepository;
+use crate::db::totp::PgTotpRepository;
 use crate::db::verification::PgVerificationRepository;
 use crate::db::webhook::PgWebhookRepository;
-use crate::crypto::Encryptor;
-use crate::db::totp::PgTotpRepository;
 use crate::db::{
     AccountRepository, AdminKeyRepository, AdminRepository, ApiKeyRepository,
     IdempotencyRepository, MessageRepository, PgAdminRepository, ProviderConfigRepository,
@@ -70,9 +70,8 @@ impl AppState {
         let idempotency_repo = Arc::new(PgIdempotencyRepository::new(db.clone()));
         let verification_repo = Arc::new(PgVerificationRepository::new(db.clone()));
         let totp_repo = Arc::new(PgTotpRepository::new(db.clone()));
-        let encryptor = Arc::new(
-            Encryptor::from_env().expect("CHORUS_ENCRYPTION_KEY missing or invalid")
-        );
+        let encryptor =
+            Arc::new(Encryptor::from_env().expect("CHORUS_ENCRYPTION_KEY missing or invalid"));
         let billing_repo = Arc::new(PgBillingRepository::new(db.clone()));
         let admin_repo = Arc::new(PgAdminRepository::new(db.clone()));
         Self {

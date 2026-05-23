@@ -531,11 +531,7 @@ pub trait TotpRepository: Send + Sync {
     async fn activate(&self, account_id: Uuid, user_id: &str) -> Result<(), DbError>;
 
     /// Update last_verified_at = now() (only on active rows).
-    async fn touch_last_verified(
-        &self,
-        account_id: Uuid,
-        user_id: &str,
-    ) -> Result<(), DbError>;
+    async fn touch_last_verified(&self, account_id: Uuid, user_id: &str) -> Result<(), DbError>;
 
     /// Set status='disabled' + zero out secret. Returns true if a row was disabled.
     async fn disenroll(&self, account_id: Uuid, user_id: &str) -> Result<bool, DbError>;

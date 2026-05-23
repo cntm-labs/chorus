@@ -59,19 +59,14 @@ impl TotpRepository for PgTotpRepository {
         Ok(row)
     }
 
-    async fn find(
-        &self,
-        account_id: Uuid,
-        user_id: &str,
-    ) -> Result<Option<TotpUser>, DbError> {
-        let row: Option<TotpUser> = sqlx::query_as(
-            "SELECT * FROM totp_users WHERE account_id = $1 AND user_id = $2",
-        )
-        .bind(account_id)
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(map_err)?;
+    async fn find(&self, account_id: Uuid, user_id: &str) -> Result<Option<TotpUser>, DbError> {
+        let row: Option<TotpUser> =
+            sqlx::query_as("SELECT * FROM totp_users WHERE account_id = $1 AND user_id = $2")
+                .bind(account_id)
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_err)?;
         Ok(row)
     }
 
@@ -92,11 +87,7 @@ impl TotpRepository for PgTotpRepository {
         Ok(())
     }
 
-    async fn touch_last_verified(
-        &self,
-        account_id: Uuid,
-        user_id: &str,
-    ) -> Result<(), DbError> {
+    async fn touch_last_verified(&self, account_id: Uuid, user_id: &str) -> Result<(), DbError> {
         sqlx::query(
             "UPDATE totp_users SET last_verified_at=now(), updated_at=now()
              WHERE account_id=$1 AND user_id=$2 AND status='active'",
@@ -171,14 +162,12 @@ impl TotpRepository for PgTotpRepository {
         new_hashes: &[Vec<u8>],
     ) -> Result<(), DbError> {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
-        sqlx::query(
-            "DELETE FROM totp_backup_codes WHERE account_id=$1 AND user_id=$2",
-        )
-        .bind(account_id)
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(map_err)?;
+        sqlx::query("DELETE FROM totp_backup_codes WHERE account_id=$1 AND user_id=$2")
+            .bind(account_id)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
         for hash in new_hashes {
             sqlx::query(
                 "INSERT INTO totp_backup_codes (account_id, user_id, code_hash)
@@ -233,7 +222,10 @@ mod tests {
     async fn enroll_creates_pending_user_with_backup_codes(pool: PgPool) {
         let acct = seed_account(&pool).await;
         let repo = PgTotpRepository::new(pool.clone());
-        let u = repo.enroll(&fixture(acct, "alice"), &hashes(10)).await.unwrap();
+        let u = repo
+            .enroll(&fixture(acct, "alice"), &hashes(10))
+            .await
+            .unwrap();
         assert_eq!(u.status, "pending");
         assert_eq!(u.user_id, "alice");
         let cnt = repo.unused_backup_codes_count(acct, "alice").await.unwrap();
@@ -245,8 +237,13 @@ mod tests {
     async fn enroll_errors_when_user_already_active(pool: PgPool) {
         let acct = seed_account(&pool).await;
         let repo = PgTotpRepository::new(pool);
-        repo.enroll(&fixture(acct, "alice"), &hashes(1)).await.unwrap();
-        let err = repo.enroll(&fixture(acct, "alice"), &hashes(1)).await.unwrap_err();
+        repo.enroll(&fixture(acct, "alice"), &hashes(1))
+            .await
+            .unwrap();
+        let err = repo
+            .enroll(&fixture(acct, "alice"), &hashes(1))
+            .await
+            .unwrap_err();
         assert!(matches!(err, DbError::Internal(_)));
     }
 
@@ -263,7 +260,9 @@ mod tests {
     async fn find_scopes_to_account(pool: PgPool) {
         let acct = seed_account(&pool).await;
         let repo = PgTotpRepository::new(pool);
-        repo.enroll(&fixture(acct, "alice"), &hashes(1)).await.unwrap();
+        repo.enroll(&fixture(acct, "alice"), &hashes(1))
+            .await
+            .unwrap();
         let other = Uuid::new_v4();
         assert!(repo.find(other, "alice").await.unwrap().is_none());
         assert!(repo.find(acct, "alice").await.unwrap().is_some());
@@ -274,7 +273,9 @@ mod tests {
     async fn activate_pending_to_active(pool: PgPool) {
         let acct = seed_account(&pool).await;
         let repo = PgTotpRepository::new(pool);
-        repo.enroll(&fixture(acct, "alice"), &hashes(1)).await.unwrap();
+        repo.enroll(&fixture(acct, "alice"), &hashes(1))
+            .await
+            .unwrap();
         repo.activate(acct, "alice").await.unwrap();
         let u = repo.find(acct, "alice").await.unwrap().unwrap();
         assert_eq!(u.status, "active");
@@ -286,7 +287,9 @@ mod tests {
     async fn activate_errors_when_not_pending(pool: PgPool) {
         let acct = seed_account(&pool).await;
         let repo = PgTotpRepository::new(pool);
-        repo.enroll(&fixture(acct, "alice"), &hashes(1)).await.unwrap();
+        repo.enroll(&fixture(acct, "alice"), &hashes(1))
+            .await
+            .unwrap();
         repo.activate(acct, "alice").await.unwrap();
         let err = repo.activate(acct, "alice").await.unwrap_err();
         assert!(matches!(err, DbError::NotFound));
@@ -297,7 +300,9 @@ mod tests {
     async fn disenroll_clears_secret(pool: PgPool) {
         let acct = seed_account(&pool).await;
         let repo = PgTotpRepository::new(pool.clone());
-        repo.enroll(&fixture(acct, "alice"), &hashes(10)).await.unwrap();
+        repo.enroll(&fixture(acct, "alice"), &hashes(10))
+            .await
+            .unwrap();
         assert!(repo.disenroll(acct, "alice").await.unwrap());
 
         let u = repo.find(acct, "alice").await.unwrap().unwrap();
@@ -311,7 +316,9 @@ mod tests {
         let acct = seed_account(&pool).await;
         let repo = PgTotpRepository::new(pool);
         let h = vec![0xBB; 32];
-        repo.enroll(&fixture(acct, "alice"), std::slice::from_ref(&h)).await.unwrap();
+        repo.enroll(&fixture(acct, "alice"), std::slice::from_ref(&h))
+            .await
+            .unwrap();
         assert!(repo.consume_backup_code(acct, "alice", &h).await.unwrap());
         assert!(!repo.consume_backup_code(acct, "alice", &h).await.unwrap());
     }
@@ -321,9 +328,14 @@ mod tests {
     async fn consume_backup_code_returns_false_when_unknown(pool: PgPool) {
         let acct = seed_account(&pool).await;
         let repo = PgTotpRepository::new(pool);
-        repo.enroll(&fixture(acct, "alice"), &hashes(1)).await.unwrap();
+        repo.enroll(&fixture(acct, "alice"), &hashes(1))
+            .await
+            .unwrap();
         let other = vec![0xCC; 32];
-        assert!(!repo.consume_backup_code(acct, "alice", &other).await.unwrap());
+        assert!(!repo
+            .consume_backup_code(acct, "alice", &other)
+            .await
+            .unwrap());
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -333,9 +345,16 @@ mod tests {
         let repo = PgTotpRepository::new(pool);
         let hs = hashes(10);
         repo.enroll(&fixture(acct, "alice"), &hs).await.unwrap();
-        repo.consume_backup_code(acct, "alice", &hs[0]).await.unwrap();
-        repo.consume_backup_code(acct, "alice", &hs[1]).await.unwrap();
-        assert_eq!(repo.unused_backup_codes_count(acct, "alice").await.unwrap(), 8);
+        repo.consume_backup_code(acct, "alice", &hs[0])
+            .await
+            .unwrap();
+        repo.consume_backup_code(acct, "alice", &hs[1])
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.unused_backup_codes_count(acct, "alice").await.unwrap(),
+            8
+        );
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -344,17 +363,32 @@ mod tests {
         let acct = seed_account(&pool).await;
         let repo = PgTotpRepository::new(pool);
         let original = hashes(10);
-        repo.enroll(&fixture(acct, "alice"), &original).await.unwrap();
-        repo.consume_backup_code(acct, "alice", &original[0]).await.unwrap();
+        repo.enroll(&fixture(acct, "alice"), &original)
+            .await
+            .unwrap();
+        repo.consume_backup_code(acct, "alice", &original[0])
+            .await
+            .unwrap();
 
         let fresh: Vec<Vec<u8>> = (10..20).map(|i| vec![i as u8; 32]).collect();
-        repo.replace_backup_codes(acct, "alice", &fresh).await.unwrap();
+        repo.replace_backup_codes(acct, "alice", &fresh)
+            .await
+            .unwrap();
 
         // Old codes (including used) gone
-        assert!(!repo.consume_backup_code(acct, "alice", &original[1]).await.unwrap());
+        assert!(!repo
+            .consume_backup_code(acct, "alice", &original[1])
+            .await
+            .unwrap());
         // New codes available
-        assert!(repo.consume_backup_code(acct, "alice", &fresh[0]).await.unwrap());
-        assert_eq!(repo.unused_backup_codes_count(acct, "alice").await.unwrap(), 9);
+        assert!(repo
+            .consume_backup_code(acct, "alice", &fresh[0])
+            .await
+            .unwrap());
+        assert_eq!(
+            repo.unused_backup_codes_count(acct, "alice").await.unwrap(),
+            9
+        );
     }
 
     #[ignore = "requires DATABASE_URL"]
@@ -362,19 +396,19 @@ mod tests {
     async fn cascade_delete_on_account_removal_drops_user_and_codes(pool: PgPool) {
         let acct = seed_account(&pool).await;
         let repo = PgTotpRepository::new(pool.clone());
-        repo.enroll(&fixture(acct, "alice"), &hashes(10)).await.unwrap();
+        repo.enroll(&fixture(acct, "alice"), &hashes(10))
+            .await
+            .unwrap();
         sqlx::query("DELETE FROM accounts WHERE id = $1")
             .bind(acct)
             .execute(&pool)
             .await
             .unwrap();
-        let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM totp_users WHERE account_id = $1",
-        )
-        .bind(acct)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM totp_users WHERE account_id = $1")
+            .bind(acct)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(n, 0);
     }
 }

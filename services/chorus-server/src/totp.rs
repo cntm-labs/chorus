@@ -34,12 +34,7 @@ pub fn generate_secret() -> [u8; SECRET_BYTES] {
 /// Always SHA1, 6 digits, 30 s step.
 pub fn compute_totp(secret: &[u8], time_seconds: u64) -> String {
     use totp_lite::{totp_custom, Sha1};
-    totp_custom::<Sha1>(
-        TOTP_PERIOD_SECS,
-        TOTP_DIGITS,
-        secret,
-        time_seconds,
-    )
+    totp_custom::<Sha1>(TOTP_PERIOD_SECS, TOTP_DIGITS, secret, time_seconds)
 }
 
 /// Verify `code` against the secret at the current step ± `TOTP_WINDOW`.
@@ -275,19 +270,17 @@ pub async fn check_rate_limits(
 /// Validate a user_id per spec (1-255 ASCII printable chars, trim).
 pub fn is_valid_user_id(s: &str) -> bool {
     let t = s.trim();
-    !t.is_empty()
-        && t.len() <= 255
-        && t.chars().all(|c| c.is_ascii_graphic() || c == ' ')
+    !t.is_empty() && t.len() <= 255 && t.chars().all(|c| c.is_ascii_graphic() || c == ' ')
 }
 
 pub mod metrics_keys {
-    pub const ENROLLMENTS_TOTAL:    &str = "chorus_totp_enrollments_total";
-    pub const ACTIVATIONS_TOTAL:    &str = "chorus_totp_activations_total";
-    pub const VERIFIES_TOTAL:       &str = "chorus_totp_verifies_total";
+    pub const ENROLLMENTS_TOTAL: &str = "chorus_totp_enrollments_total";
+    pub const ACTIVATIONS_TOTAL: &str = "chorus_totp_activations_total";
+    pub const VERIFIES_TOTAL: &str = "chorus_totp_verifies_total";
     pub const DISENROLLMENTS_TOTAL: &str = "chorus_totp_disenrollments_total";
-    pub const BACKUP_REMAINING:     &str = "chorus_totp_backup_codes_remaining";
-    pub const ENROLL_DURATION:      &str = "chorus_totp_enroll_duration_seconds";
-    pub const VERIFY_DURATION:      &str = "chorus_totp_verify_duration_seconds";
+    pub const BACKUP_REMAINING: &str = "chorus_totp_backup_codes_remaining";
+    pub const ENROLL_DURATION: &str = "chorus_totp_enroll_duration_seconds";
+    pub const VERIFY_DURATION: &str = "chorus_totp_verify_duration_seconds";
 }
 
 #[cfg(test)]
@@ -431,7 +424,7 @@ mod tests {
 
     #[test]
     fn is_backup_code_format_rejects_wrong_length() {
-        assert!(!is_backup_code_format("a3f8-9d2c"));   // 9 chars
+        assert!(!is_backup_code_format("a3f8-9d2c")); // 9 chars
         assert!(!is_backup_code_format("a3f8-9d2cxx")); // 11 chars
     }
 
@@ -452,7 +445,10 @@ mod tests {
 
     #[test]
     fn hash_backup_code_is_deterministic() {
-        assert_eq!(hash_backup_code("a3f8-9d2cx"), hash_backup_code("a3f8-9d2cx"));
+        assert_eq!(
+            hash_backup_code("a3f8-9d2cx"),
+            hash_backup_code("a3f8-9d2cx")
+        );
     }
 
     #[test]
@@ -472,7 +468,10 @@ mod tests {
             .decode(b64)
             .unwrap();
         // PNG magic: 89 50 4E 47 0D 0A 1A 0A
-        assert_eq!(&bytes[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        assert_eq!(
+            &bytes[..8],
+            &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        );
     }
 
     #[test]
