@@ -294,6 +294,13 @@ pub fn create_router_with_metrics(
         .route("/internal/bounces", post(routes::internal::handle_bounce))
         .route("/internal/dns-check", get(routes::internal::dns_check))
         .nest("/admin", routes::admin::router())
+        .route("/v1/totp/enroll", post(routes::totp::enroll_totp))
+        .route("/v1/totp/activate", post(routes::totp::activate_totp))
+        .route("/v1/totp/verify", post(routes::totp::verify_totp))
+        .route(
+            "/v1/totp/{user_id}",
+            get(routes::totp::get_totp_status).delete(routes::totp::disenroll_totp),
+        )
         .with_state(state)
         .layer(axum_middleware::from_fn(crate::middleware::metrics::track))
         .layer(axum_middleware::from_fn(

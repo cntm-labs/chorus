@@ -10,5 +10,6 @@ pub mod otp;
 pub mod provider_configs;
 pub mod sms;
 pub mod suppressions;
+pub mod totp;
 pub mod verifications;
 pub mod webhooks;
