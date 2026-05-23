@@ -141,6 +141,142 @@ pub fn qr_png_data_uri(otpauth_uri: &str) -> anyhow::Result<String> {
     Ok(format!("data:image/png;base64,{b64}"))
 }
 
+// ---- Errors + rate limit ----
+
+use uuid::Uuid;
+
+/// Reasons a TOTP operation may fail with a non-handler-specific error.
+#[derive(Debug)]
+pub enum TotpError {
+    InvalidUserId,
+    AlreadyEnrolled,
+    NotFound,
+    NotPending,
+    NotActive,
+    IncorrectCode,
+    RateLimitedUser { retry_after_sec: u64 },
+    RateLimitedAccount { retry_after_sec: u64 },
+    Db(crate::db::DbError),
+    Internal(anyhow::Error),
+}
+
+/// Which rate-limit pool to consult.
+#[derive(Debug, Clone, Copy)]
+pub enum RateLimitKind {
+    Verify,
+    Activate,
+    Enroll, // shared by /enroll and /backup-codes/regenerate
+}
+
+impl RateLimitKind {
+    fn user_key_prefix(self) -> &'static str {
+        match self {
+            RateLimitKind::Verify => "totp:rl:verify",
+            RateLimitKind::Activate => "totp:rl:activate",
+            RateLimitKind::Enroll => "totp:rl:enroll",
+        }
+    }
+
+    fn user_limit(self) -> u32 {
+        match self {
+            RateLimitKind::Verify => RATE_LIMIT_VERIFY_PER_USER_MIN,
+            RateLimitKind::Activate => RATE_LIMIT_ACTIVATE_PER_USER_MIN,
+            RateLimitKind::Enroll => RATE_LIMIT_ENROLL_PER_USER_MIN,
+        }
+    }
+}
+
+const RATE_LIMIT_LUA: &str = r#"
+local key_user    = KEYS[1]
+local key_acct    = KEYS[2]
+local now_ms      = tonumber(ARGV[1])
+local window_user = tonumber(ARGV[2])
+local limit_user  = tonumber(ARGV[3])
+local window_acct = tonumber(ARGV[4])
+local limit_acct  = tonumber(ARGV[5])
+local member      = ARGV[6]
+
+redis.call('ZREMRANGEBYSCORE', key_user, 0, now_ms - window_user)
+local count_user = redis.call('ZCARD', key_user)
+if count_user >= limit_user then
+    local oldest = redis.call('ZRANGE', key_user, 0, 0, 'WITHSCORES')
+    return {'user', tonumber(oldest[2]) + window_user - now_ms}
+end
+
+redis.call('ZREMRANGEBYSCORE', key_acct, 0, now_ms - window_acct)
+local count_acct = redis.call('ZCARD', key_acct)
+if count_acct >= limit_acct then
+    local oldest = redis.call('ZRANGE', key_acct, 0, 0, 'WITHSCORES')
+    return {'acct', tonumber(oldest[2]) + window_acct - now_ms}
+end
+
+redis.call('ZADD', key_user, now_ms, member)
+redis.call('ZADD', key_acct, now_ms, member)
+redis.call('EXPIRE', key_user, math.floor(window_user / 1000))
+redis.call('EXPIRE', key_acct, math.floor(window_acct / 1000))
+return {'ok', 0}
+"#;
+
+/// Sliding-window rate limit over per-user and per-account ZSETs.
+pub async fn check_rate_limits(
+    redis: &redis::Client,
+    account_id: Uuid,
+    user_id_hash: &str,
+    kind: RateLimitKind,
+) -> Result<(), TotpError> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| TotpError::Internal(anyhow::anyhow!("clock: {e}")))?
+        .as_millis() as u64;
+
+    let key_user = format!("{}:{}:{}", kind.user_key_prefix(), account_id, user_id_hash);
+    let key_acct = format!("totp:rl:acct:{account_id}");
+    let member = format!("{now_ms}:{}", Uuid::new_v4());
+
+    let window_user_ms: u64 = 60 * 1000;
+    let window_acct_ms: u64 = 60 * 1000;
+
+    let mut conn = redis
+        .get_multiplexed_tokio_connection()
+        .await
+        .map_err(|e| TotpError::Internal(anyhow::anyhow!(e)))?;
+
+    let result: (String, i64) = redis::Script::new(RATE_LIMIT_LUA)
+        .key(&key_user)
+        .key(&key_acct)
+        .arg(now_ms)
+        .arg(window_user_ms)
+        .arg(kind.user_limit())
+        .arg(window_acct_ms)
+        .arg(RATE_LIMIT_PER_ACCT_MIN)
+        .arg(member)
+        .invoke_async(&mut conn)
+        .await
+        .map_err(|e| TotpError::Internal(anyhow::anyhow!(e)))?;
+
+    match result.0.as_str() {
+        "ok" => Ok(()),
+        "user" => Err(TotpError::RateLimitedUser {
+            retry_after_sec: (result.1.max(0) as u64).div_ceil(1000),
+        }),
+        "acct" => Err(TotpError::RateLimitedAccount {
+            retry_after_sec: (result.1.max(0) as u64).div_ceil(1000),
+        }),
+        other => Err(TotpError::Internal(anyhow::anyhow!(
+            "unknown rate-limit outcome: {other}"
+        ))),
+    }
+}
+
+/// Validate a user_id per spec (1-255 ASCII printable chars, trim).
+pub fn is_valid_user_id(s: &str) -> bool {
+    let t = s.trim();
+    !t.is_empty()
+        && t.len() <= 255
+        && t.chars().all(|c| c.is_ascii_graphic() || c == ' ')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,5 +460,22 @@ mod tests {
             .unwrap();
         // PNG magic: 89 50 4E 47 0D 0A 1A 0A
         assert_eq!(&bytes[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    }
+
+    #[test]
+    fn is_valid_user_id_accepts_typical() {
+        assert!(is_valid_user_id("alice"));
+        assert!(is_valid_user_id("alice@app.com"));
+        assert!(is_valid_user_id("550e8400-e29b-41d4-a716-446655440000"));
+        assert!(is_valid_user_id(&"a".repeat(255)));
+    }
+
+    #[test]
+    fn is_valid_user_id_rejects_bad() {
+        assert!(!is_valid_user_id(""));
+        assert!(!is_valid_user_id("   "));
+        assert!(!is_valid_user_id(&"a".repeat(256)));
+        assert!(!is_valid_user_id("user\nname"));
+        assert!(!is_valid_user_id("คีย์"));
     }
 }
