@@ -2,6 +2,7 @@ pub mod app;
 pub mod auth;
 pub mod billing;
 pub mod config;
+pub mod crypto;
 pub mod db;
 pub mod idempotency;
 pub mod metrics;
