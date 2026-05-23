@@ -11,12 +11,13 @@ use uuid::Uuid;
 // Re-use types from chorus-server
 use chorus_server::app::{create_router, AppState};
 use chorus_server::config::Config;
+use chorus_server::crypto::Encryptor;
 use chorus_server::db::{
     Account, AccountRepository, AddSuppressionResult, ApiKey, ApiKeyRepository, DbError,
     DeliveryEvent, IdempotencyOutcome, IdempotencyRepository, Message, MessageRepository,
-    NewMessage, NewProviderConfig, NewSuppression, NewVerification, NewWebhook, Pagination,
-    ProviderConfig, ProviderConfigRepository, Suppression, SuppressionRepository, Verification,
-    VerificationRepository, Webhook, WebhookRepository,
+    NewMessage, NewProviderConfig, NewSuppression, NewTotpUser, NewVerification, NewWebhook,
+    Pagination, ProviderConfig, ProviderConfigRepository, Suppression, SuppressionRepository,
+    TotpRepository, TotpUser, Verification, VerificationRepository, Webhook, WebhookRepository,
 };
 
 // ---------------------------------------------------------------------------
@@ -101,6 +102,73 @@ impl chorus_server::db::VerificationRepository for NullVerificationRepo {
     async fn expire_pending(&self, _limit: i64) -> Result<u64, DbError> {
         Ok(0)
     }
+}
+
+/// No-op TOTP repo for tests that don't exercise TOTP logic.
+struct NullTotpRepo;
+
+#[async_trait]
+impl TotpRepository for NullTotpRepo {
+    async fn enroll(
+        &self,
+        _new_user: &NewTotpUser,
+        _hashes: &[Vec<u8>],
+    ) -> Result<TotpUser, DbError> {
+        Err(DbError::Internal(anyhow::anyhow!("NullTotpRepo::enroll not implemented")))
+    }
+    async fn find(&self, _account_id: Uuid, _user_id: &str) -> Result<Option<TotpUser>, DbError> {
+        Ok(None)
+    }
+    async fn activate(&self, _account_id: Uuid, _user_id: &str) -> Result<(), DbError> {
+        Err(DbError::NotFound)
+    }
+    async fn touch_last_verified(
+        &self,
+        _account_id: Uuid,
+        _user_id: &str,
+    ) -> Result<(), DbError> {
+        Ok(())
+    }
+    async fn disenroll(&self, _account_id: Uuid, _user_id: &str) -> Result<bool, DbError> {
+        Ok(false)
+    }
+    async fn consume_backup_code(
+        &self,
+        _account_id: Uuid,
+        _user_id: &str,
+        _hash: &[u8],
+    ) -> Result<bool, DbError> {
+        Ok(false)
+    }
+    async fn unused_backup_codes_count(
+        &self,
+        _account_id: Uuid,
+        _user_id: &str,
+    ) -> Result<i64, DbError> {
+        Ok(0)
+    }
+    async fn replace_backup_codes(
+        &self,
+        _account_id: Uuid,
+        _user_id: &str,
+        _hashes: &[Vec<u8>],
+    ) -> Result<(), DbError> {
+        Ok(())
+    }
+}
+
+/// Test helper: 32-byte zero-key Encryptor (NOT for production).
+fn null_encryptor() -> Arc<Encryptor> {
+    use base64::Engine;
+    let key_b64 = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
+    let prev = std::env::var("CHORUS_ENCRYPTION_KEY").ok();
+    std::env::set_var("CHORUS_ENCRYPTION_KEY", &key_b64);
+    let enc = Encryptor::from_env().expect("encryptor from null key");
+    match prev {
+        Some(v) => std::env::set_var("CHORUS_ENCRYPTION_KEY", v),
+        None => std::env::remove_var("CHORUS_ENCRYPTION_KEY"),
+    }
+    Arc::new(enc)
 }
 
 struct MockAccountRepo {
@@ -506,6 +574,8 @@ fn test_fixture() -> TestFixture {
 
     let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(NullIdempotencyRepo);
     let verification_repo: Arc<dyn VerificationRepository> = Arc::new(NullVerificationRepo);
+    let totp_repo: Arc<dyn TotpRepository> = Arc::new(NullTotpRepo);
+    let encryptor = null_encryptor();
 
     let state = Arc::new(AppState::with_repos(
         redis,
@@ -518,6 +588,8 @@ fn test_fixture() -> TestFixture {
         suppressions.clone(),
         idempotency_repo,
         verification_repo,
+        totp_repo,
+        encryptor,
     ));
 
     TestFixture {
@@ -1778,6 +1850,8 @@ fn fixture_with_mem_idempotency() -> (Arc<AppState>, Arc<MockMessageRepo>) {
     let webhook_repo = Arc::new(MockWebhookRepo);
     let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
     let verification_repo: Arc<dyn VerificationRepository> = Arc::new(NullVerificationRepo);
+    let totp_repo: Arc<dyn TotpRepository> = Arc::new(NullTotpRepo);
+    let encryptor = null_encryptor();
 
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
     let config = Arc::new(Config::from_env());
@@ -1793,6 +1867,8 @@ fn fixture_with_mem_idempotency() -> (Arc<AppState>, Arc<MockMessageRepo>) {
         suppressions,
         idempotency_repo,
         verification_repo,
+        totp_repo,
+        encryptor,
     ));
 
     (state, messages)
@@ -2236,6 +2312,8 @@ fn fixture_two_api_keys() -> Arc<AppState> {
     let webhook_repo = Arc::new(MockWebhookRepo);
     let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
     let verification_repo: Arc<dyn VerificationRepository> = Arc::new(NullVerificationRepo);
+    let totp_repo: Arc<dyn TotpRepository> = Arc::new(NullTotpRepo);
+    let encryptor = null_encryptor();
 
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
     let config = Arc::new(Config::from_env());
@@ -2251,6 +2329,8 @@ fn fixture_two_api_keys() -> Arc<AppState> {
         suppressions,
         idempotency_repo,
         verification_repo,
+        totp_repo,
+        encryptor,
     ))
 }
 
@@ -2490,6 +2570,8 @@ fn fixture_with_verification() -> (Arc<AppState>, Arc<MemVerificationRepo>) {
     let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
     let verification_repo: Arc<MemVerificationRepo> = Arc::new(MemVerificationRepo::new());
     let verification_dyn: Arc<dyn VerificationRepository> = verification_repo.clone();
+    let totp_repo: Arc<dyn TotpRepository> = Arc::new(NullTotpRepo);
+    let encryptor = null_encryptor();
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
     let config = Arc::new(Config::from_env());
     let state = Arc::new(AppState::with_repos(
@@ -2503,6 +2585,8 @@ fn fixture_with_verification() -> (Arc<AppState>, Arc<MemVerificationRepo>) {
         suppressions,
         idempotency_repo,
         verification_dyn,
+        totp_repo,
+        encryptor,
     ));
     (state, verification_repo)
 }
