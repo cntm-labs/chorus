@@ -3478,3 +3478,127 @@ async fn verify_returns_404_when_unknown_user() {
     ).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn verify_with_backup_code_consumes_one() {
+    let (state, repo) = fixture_with_totp();
+    let app = create_router(state);
+    let resp = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/totp/enroll")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"user_id":"alice"}"#)).unwrap()
+    ).await.unwrap();
+    let v = response_body(resp).await;
+    let backup0 = v["backup_codes"][0].as_str().unwrap().to_string();
+
+    // Move user to active status directly via the repo (skip /activate which requires TOTP code)
+    {
+        let mut users = repo.users.lock().await;
+        for x in users.iter_mut() {
+            if x.user_id == "alice" { x.status = "active".into(); }
+        }
+    }
+
+    let body = serde_json::json!({"user_id":"alice","code":backup0}).to_string();
+    let resp = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/totp/verify")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body.clone())).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = response_body(resp).await;
+    assert_eq!(v["verified"], true);
+    assert_eq!(v["method"], "backup_code");
+    assert_eq!(v["cost_micro"], 0);
+
+    // Replay same backup code → 422 incorrect_code
+    let resp = app.oneshot(
+        Request::builder().method("POST").uri("/v1/totp/verify")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body)).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response_body(resp).await["error"]["code"], "incorrect_code");
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn regenerate_returns_new_backup_codes_and_invalidates_old() {
+    let (state, repo) = fixture_with_totp();
+    let app = create_router(state);
+    let resp = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/totp/enroll")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"user_id":"alice"}"#)).unwrap()
+    ).await.unwrap();
+    let v = response_body(resp).await;
+    let old_first = v["backup_codes"][0].as_str().unwrap().to_string();
+
+    // Make user active
+    {
+        let mut users = repo.users.lock().await;
+        for x in users.iter_mut() {
+            if x.user_id == "alice" { x.status = "active".into(); }
+        }
+    }
+
+    let resp = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/totp/backup-codes/regenerate")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"user_id":"alice"}"#)).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = response_body(resp).await;
+    let new_codes = v["backup_codes"].as_array().unwrap();
+    assert_eq!(new_codes.len(), 10);
+    assert!(!new_codes.iter().any(|c| c.as_str().unwrap() == old_first));
+
+    // Old code now invalid → 422
+    let body = serde_json::json!({"user_id":"alice","code":old_first}).to_string();
+    let resp = app.oneshot(
+        Request::builder().method("POST").uri("/v1/totp/verify")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body)).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn rate_limit_per_user_blocks_after_5_verifies() {
+    let (state, repo) = fixture_with_totp();
+    let app = create_router(state);
+    let _ = app.clone().oneshot(
+        Request::builder().method("POST").uri("/v1/totp/enroll")
+            .header("authorization", format!("Bearer {TEST_API_KEY}"))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"user_id":"alice"}"#)).unwrap()
+    ).await.unwrap();
+    {
+        let mut users = repo.users.lock().await;
+        for x in users.iter_mut() {
+            if x.user_id == "alice" { x.status = "active".into(); }
+        }
+    }
+    let body = serde_json::json!({"user_id":"alice","code":"000000"}).to_string();
+    let mut codes_seen = vec![];
+    for _ in 0..6 {
+        let resp = app.clone().oneshot(
+            Request::builder().method("POST").uri("/v1/totp/verify")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone())).unwrap()
+        ).await.unwrap();
+        codes_seen.push(resp.status().as_u16());
+    }
+    // First 5: 422 incorrect_code; 6th: 429 rate_limited
+    assert_eq!(&codes_seen[..5], &[422, 422, 422, 422, 422]);
+    assert_eq!(codes_seen[5], 429);
+}
