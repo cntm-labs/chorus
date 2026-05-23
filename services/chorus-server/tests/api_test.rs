@@ -157,18 +157,24 @@ impl TotpRepository for NullTotpRepo {
     }
 }
 
-/// Test helper: 32-byte zero-key Encryptor (NOT for production).
+/// Test helper: returns a shared `Arc<Encryptor>` constructed once from a
+/// 32-byte fixed test key. NOT for production — for tests only.
+///
+/// We bypass `Encryptor::from_env` to avoid racing on the `CHORUS_ENCRYPTION_KEY`
+/// env var when tests run in parallel.
 fn null_encryptor() -> Arc<Encryptor> {
-    use base64::Engine;
-    let key_b64 = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
-    let prev = std::env::var("CHORUS_ENCRYPTION_KEY").ok();
-    std::env::set_var("CHORUS_ENCRYPTION_KEY", &key_b64);
-    let enc = Encryptor::from_env().expect("encryptor from null key");
-    match prev {
-        Some(v) => std::env::set_var("CHORUS_ENCRYPTION_KEY", v),
-        None => std::env::remove_var("CHORUS_ENCRYPTION_KEY"),
-    }
-    Arc::new(enc)
+    use std::sync::OnceLock;
+    static ENCRYPTOR: OnceLock<Arc<Encryptor>> = OnceLock::new();
+    ENCRYPTOR
+        .get_or_init(|| {
+            use base64::Engine;
+            let key_b64 = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
+            // Set the env var (safe here because this runs exactly once,
+            // before any other test thread reads it via this helper).
+            std::env::set_var("CHORUS_ENCRYPTION_KEY", &key_b64);
+            Arc::new(Encryptor::from_env().expect("encryptor from null key"))
+        })
+        .clone()
 }
 
 struct MockAccountRepo {
