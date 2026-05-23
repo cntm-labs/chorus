@@ -262,46 +262,27 @@ impl AdminRepository for PgAdminRepository {
         &self,
         filters: &MessageSearchFilters,
     ) -> Result<Vec<Message>, DbError> {
-        // Build dynamic query with conditional WHERE clauses
         let mut conditions = Vec::new();
         let mut param_idx = 1u32;
 
-        if filters.account_id.is_some() {
-            conditions.push(format!("account_id = ${param_idx}"));
-            param_idx += 1;
+        macro_rules! add_condition {
+            ($field:expr, $op:expr, $val:expr) => {
+                if $val.is_some() {
+                    conditions.push(format!("{} {} ${}", $field, $op, param_idx));
+                    param_idx += 1;
+                }
+            };
         }
-        if filters.channel.is_some() {
-            conditions.push(format!("channel = ${param_idx}"));
-            param_idx += 1;
-        }
-        if filters.status.is_some() {
-            conditions.push(format!("status = ${param_idx}"));
-            param_idx += 1;
-        }
-        if filters.provider.is_some() {
-            conditions.push(format!("provider = ${param_idx}"));
-            param_idx += 1;
-        }
-        if filters.date_from.is_some() {
-            conditions.push(format!("created_at >= ${param_idx}"));
-            param_idx += 1;
-        }
-        if filters.date_to.is_some() {
-            conditions.push(format!("created_at <= ${param_idx}"));
-            param_idx += 1;
-        }
-        if filters.recipient.is_some() {
-            conditions.push(format!("recipient ILIKE ${param_idx}"));
-            param_idx += 1;
-        }
-        if filters.min_cost.is_some() {
-            conditions.push(format!("cost_microdollars >= ${param_idx}"));
-            param_idx += 1;
-        }
-        if filters.max_cost.is_some() {
-            conditions.push(format!("cost_microdollars <= ${param_idx}"));
-            param_idx += 1;
-        }
+
+        add_condition!("account_id", "=", filters.account_id);
+        add_condition!("channel", "=", filters.channel);
+        add_condition!("status", "=", filters.status);
+        add_condition!("provider", "=", filters.provider);
+        add_condition!("created_at", ">=", filters.date_from);
+        add_condition!("created_at", "<=", filters.date_to);
+        add_condition!("recipient", "ILIKE", filters.recipient);
+        add_condition!("cost_microdollars", ">=", filters.min_cost);
+        add_condition!("cost_microdollars", "<=", filters.max_cost);
 
         let where_clause = if conditions.is_empty() {
             String::new()
@@ -309,44 +290,23 @@ impl AdminRepository for PgAdminRepository {
             format!("WHERE {}", conditions.join(" AND "))
         };
 
-        let limit_param = param_idx;
-        param_idx += 1;
-        let offset_param = param_idx;
-
         let sql = format!(
-            "SELECT * FROM messages {where_clause} ORDER BY created_at DESC LIMIT ${limit_param} OFFSET ${offset_param}"
+            "SELECT * FROM messages {where_clause} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+            param_idx,
+            param_idx + 1
         );
 
         let mut query = sqlx::query_as::<_, Message>(&sql);
 
-        // Bind parameters in the same order
-        if let Some(ref v) = filters.account_id {
-            query = query.bind(v);
-        }
-        if let Some(ref v) = filters.channel {
-            query = query.bind(v);
-        }
-        if let Some(ref v) = filters.status {
-            query = query.bind(v);
-        }
-        if let Some(ref v) = filters.provider {
-            query = query.bind(v);
-        }
-        if let Some(ref v) = filters.date_from {
-            query = query.bind(v);
-        }
-        if let Some(ref v) = filters.date_to {
-            query = query.bind(v);
-        }
-        if let Some(ref v) = filters.recipient {
-            query = query.bind(format!("%{v}%"));
-        }
-        if let Some(ref v) = filters.min_cost {
-            query = query.bind(v);
-        }
-        if let Some(ref v) = filters.max_cost {
-            query = query.bind(v);
-        }
+        if let Some(ref v) = filters.account_id { query = query.bind(v); }
+        if let Some(ref v) = filters.channel { query = query.bind(v); }
+        if let Some(ref v) = filters.status { query = query.bind(v); }
+        if let Some(ref v) = filters.provider { query = query.bind(v); }
+        if let Some(ref v) = filters.date_from { query = query.bind(v); }
+        if let Some(ref v) = filters.date_to { query = query.bind(v); }
+        if let Some(ref v) = filters.recipient { query = query.bind(format!("%{v}%")); }
+        if let Some(ref v) = filters.min_cost { query = query.bind(v); }
+        if let Some(ref v) = filters.max_cost { query = query.bind(v); }
 
         let limit = filters.limit.unwrap_or(50);
         let offset = filters.offset.unwrap_or(0);

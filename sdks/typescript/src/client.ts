@@ -129,7 +129,8 @@ class MessageClient {
     if (params?.limit !== undefined) query.set("limit", String(params.limit));
     if (params?.offset !== undefined) query.set("offset", String(params.offset));
     const qs = query.toString();
-    return this.client.request("GET", `/v1/messages${qs ? `?${qs}` : ""}`);
+    const path = qs ? `/v1/messages?${qs}` : "/v1/messages";
+    return this.client.request("GET", path);
   }
 }
 
