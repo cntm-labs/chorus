@@ -88,6 +88,19 @@ pub async fn enroll_totp(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let start = std::time::Instant::now();
+    let response = enroll_totp_inner(state, ctx, headers, body).await;
+    metrics::histogram!(totp::metrics_keys::ENROLL_DURATION)
+        .record(start.elapsed().as_secs_f64());
+    response
+}
+
+async fn enroll_totp_inner(
+    state: Arc<AppState>,
+    ctx: AccountContext,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     let token = match idempotency::begin(
         &state, ctx.key_id, &headers, &Method::POST, ENROLL_PATH, &body,
     )
@@ -129,6 +142,7 @@ pub async fn enroll_totp(
     // Reject if already pending or active.
     match state.totp_repo().find(ctx.account_id, &user_id).await {
         Ok(Some(existing)) if existing.status != "disabled" => {
+            metrics::counter!(totp::metrics_keys::ENROLLMENTS_TOTAL, "outcome" => "already_enrolled").increment(1);
             let (s, b) = error_json(
                 StatusCode::CONFLICT,
                 "already_enrolled",
@@ -199,6 +213,7 @@ pub async fn enroll_totp(
         cost_micro: 0,
     };
     let bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_default());
+    metrics::counter!(totp::metrics_keys::ENROLLMENTS_TOTAL, "outcome" => "created").increment(1);
     idempotency::finalize_and_respond(&state, token, StatusCode::CREATED, bytes).await
 }
 
@@ -284,6 +299,18 @@ pub async fn verify_totp(
     ctx: AccountContext,
     Json(req): Json<VerifyRequest>,
 ) -> Response {
+    let start = std::time::Instant::now();
+    let response = verify_totp_inner(state, ctx, req).await;
+    metrics::histogram!(totp::metrics_keys::VERIFY_DURATION)
+        .record(start.elapsed().as_secs_f64());
+    response
+}
+
+async fn verify_totp_inner(
+    state: Arc<AppState>,
+    ctx: AccountContext,
+    req: VerifyRequest,
+) -> Response {
     if !totp::is_valid_user_id(&req.user_id) {
         return error_response(
             StatusCode::BAD_REQUEST,
@@ -322,6 +349,11 @@ pub async fn verify_totp(
             Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
         };
         if !ok {
+            metrics::counter!(
+                totp::metrics_keys::VERIFIES_TOTAL,
+                "outcome" => "wrong_code",
+                "method" => "backup_code"
+            ).increment(1);
             return error_response(StatusCode::UNPROCESSABLE_ENTITY, "incorrect_code", "code did not match");
         }
         let _ = state.totp_repo().touch_last_verified(ctx.account_id, user_id).await;
@@ -330,6 +362,12 @@ pub async fn verify_totp(
             .unused_backup_codes_count(ctx.account_id, user_id)
             .await
             .unwrap_or(0);
+        metrics::counter!(
+            totp::metrics_keys::VERIFIES_TOTAL,
+            "outcome" => "approved",
+            "method" => "backup_code"
+        ).increment(1);
+        metrics::gauge!(totp::metrics_keys::BACKUP_REMAINING).set(unused as f64);
         return Json(VerifyResponse {
             user_id: user.user_id.clone(),
             status: "active".into(),
@@ -347,6 +385,11 @@ pub async fn verify_totp(
     };
     let now = unix_now();
     if !totp::verify_totp_with_window(&secret, now, &req.code) {
+        metrics::counter!(
+            totp::metrics_keys::VERIFIES_TOTAL,
+            "outcome" => "wrong_code",
+            "method" => "totp"
+        ).increment(1);
         return error_response(StatusCode::UNPROCESSABLE_ENTITY, "incorrect_code", "code did not match");
     }
     let _ = state.totp_repo().touch_last_verified(ctx.account_id, user_id).await;
@@ -355,6 +398,12 @@ pub async fn verify_totp(
         .unused_backup_codes_count(ctx.account_id, user_id)
         .await
         .unwrap_or(0);
+    metrics::counter!(
+        totp::metrics_keys::VERIFIES_TOTAL,
+        "outcome" => "approved",
+        "method" => "totp"
+    ).increment(1);
+    metrics::gauge!(totp::metrics_keys::BACKUP_REMAINING).set(unused as f64);
     Json(VerifyResponse {
         user_id: user.user_id.clone(),
         status: "active".into(),

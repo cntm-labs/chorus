@@ -280,6 +280,16 @@ pub fn is_valid_user_id(s: &str) -> bool {
         && t.chars().all(|c| c.is_ascii_graphic() || c == ' ')
 }
 
+pub mod metrics_keys {
+    pub const ENROLLMENTS_TOTAL:    &str = "chorus_totp_enrollments_total";
+    pub const ACTIVATIONS_TOTAL:    &str = "chorus_totp_activations_total";
+    pub const VERIFIES_TOTAL:       &str = "chorus_totp_verifies_total";
+    pub const DISENROLLMENTS_TOTAL: &str = "chorus_totp_disenrollments_total";
+    pub const BACKUP_REMAINING:     &str = "chorus_totp_backup_codes_remaining";
+    pub const ENROLL_DURATION:      &str = "chorus_totp_enroll_duration_seconds";
+    pub const VERIFY_DURATION:      &str = "chorus_totp_verify_duration_seconds";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
