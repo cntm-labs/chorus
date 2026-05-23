@@ -237,12 +237,12 @@ pub async fn check_rate_limits(
     let window_user_ms: u64 = 60 * 1000;
     let window_acct_ms: u64 = 60 * 1000;
 
-    let mut conn = redis
-        .get_multiplexed_tokio_connection()
-        .await
-        .map_err(|e| TotpError::Internal(anyhow::anyhow!(e)))?;
+    let mut conn = match redis.get_multiplexed_tokio_connection().await {
+        Ok(c) => c,
+        Err(_) => return Ok(()), // fail open — Redis unavailable, skip rate limiting
+    };
 
-    let result: (String, i64) = redis::Script::new(RATE_LIMIT_LUA)
+    let result: (String, i64) = match redis::Script::new(RATE_LIMIT_LUA)
         .key(&key_user)
         .key(&key_acct)
         .arg(now_ms)
@@ -253,7 +253,10 @@ pub async fn check_rate_limits(
         .arg(member)
         .invoke_async(&mut conn)
         .await
-        .map_err(|e| TotpError::Internal(anyhow::anyhow!(e)))?;
+    {
+        Ok(r) => r,
+        Err(_) => return Ok(()), // fail open — script error, skip rate limiting
+    };
 
     match result.0.as_str() {
         "ok" => Ok(()),
