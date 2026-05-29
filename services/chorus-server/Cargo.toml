@@ -21,7 +21,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { workspace = true }
 chrono = { workspace = true }
 sha2 = { workspace = true }
+aes-gcm = { workspace = true }
 anyhow = { workspace = true }
+base64 = { workspace = true }
 thiserror = { workspace = true }
 dotenvy = { workspace = true }
 rand = { workspace = true }
@@ -30,6 +32,10 @@ hmac = { version = "0.12", features = ["std"] }
 reqwest = { workspace = true }
 async-trait = { workspace = true }
 hickory-resolver = { workspace = true }
+totp-lite = "2"
+base32 = "0.5"
+urlencoding = "2"
+fast_qr = { version = "0.13", features = ["image"] }
 regex = "1"
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.16", default-features = false, features = ["http-listener"] }

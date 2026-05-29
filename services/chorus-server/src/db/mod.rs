@@ -4,6 +4,7 @@ pub mod idempotency;
 pub mod postgres;
 pub mod provider_config;
 pub mod suppression;
+pub mod totp;
 pub mod verification;
 pub mod webhook;
 
@@ -469,4 +470,93 @@ pub trait VerificationRepository: Send + Sync {
 
     /// Cleanup: bulk-mark expired pending rows. Returns count.
     async fn expire_pending(&self, limit: i64) -> Result<u64, DbError>;
+}
+
+// ----- B2: TOTP -----
+
+/// A TOTP enrollment record (one row per user).
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct TotpUser {
+    pub account_id: Uuid,
+    pub user_id: String,
+    #[serde(skip)]
+    pub secret: Vec<u8>,
+    pub status: String,
+    pub algorithm: String,
+    pub digits: i16,
+    pub period_secs: i16,
+    pub issuer: Option<String>,
+    pub label: Option<String>,
+    pub last_verified_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub activated_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Parameters for inserting a new pending TOTP user.
+pub struct NewTotpUser {
+    pub account_id: Uuid,
+    pub user_id: String,
+    pub encrypted_secret: Vec<u8>,
+    pub issuer: Option<String>,
+    pub label: Option<String>,
+}
+
+/// A single backup recovery code row.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TotpBackupCode {
+    pub id: i64,
+    pub account_id: Uuid,
+    pub user_id: String,
+    pub code_hash: Vec<u8>,
+    pub used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// TOTP lifecycle + backup-code management.
+#[async_trait]
+pub trait TotpRepository: Send + Sync {
+    /// Insert a new pending TOTP user + N backup codes in one transaction.
+    /// Errors with `Internal` containing "23505" SQLSTATE on PK conflict.
+    async fn enroll(
+        &self,
+        new_user: &NewTotpUser,
+        backup_code_hashes: &[Vec<u8>],
+    ) -> Result<TotpUser, DbError>;
+
+    async fn find(&self, account_id: Uuid, user_id: &str) -> Result<Option<TotpUser>, DbError>;
+
+    /// Set status='active' + activated_at=now() only if currently pending.
+    /// Errors with `NotFound` if not pending.
+    async fn activate(&self, account_id: Uuid, user_id: &str) -> Result<(), DbError>;
+
+    /// Update last_verified_at = now() (only on active rows).
+    async fn touch_last_verified(&self, account_id: Uuid, user_id: &str) -> Result<(), DbError>;
+
+    /// Set status='disabled' + zero out secret. Returns true if a row was disabled.
+    async fn disenroll(&self, account_id: Uuid, user_id: &str) -> Result<bool, DbError>;
+
+    /// Atomic UPDATE ... WHERE used_at IS NULL ... RETURNING id.
+    /// Returns true if the code was consumed (found and unused).
+    async fn consume_backup_code(
+        &self,
+        account_id: Uuid,
+        user_id: &str,
+        code_hash: &[u8],
+    ) -> Result<bool, DbError>;
+
+    /// Count unused backup codes for the low_backup_codes warning.
+    async fn unused_backup_codes_count(
+        &self,
+        account_id: Uuid,
+        user_id: &str,
+    ) -> Result<i64, DbError>;
+
+    /// Replace all backup codes (regenerate endpoint): DELETE old + INSERT new in tx.
+    async fn replace_backup_codes(
+        &self,
+        account_id: Uuid,
+        user_id: &str,
+        new_hashes: &[Vec<u8>],
+    ) -> Result<(), DbError>;
 }

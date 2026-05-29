@@ -11,12 +11,13 @@ use uuid::Uuid;
 // Re-use types from chorus-server
 use chorus_server::app::{create_router, AppState};
 use chorus_server::config::Config;
+use chorus_server::crypto::Encryptor;
 use chorus_server::db::{
     Account, AccountRepository, AddSuppressionResult, ApiKey, ApiKeyRepository, DbError,
     DeliveryEvent, IdempotencyOutcome, IdempotencyRepository, Message, MessageRepository,
-    NewMessage, NewProviderConfig, NewSuppression, NewVerification, NewWebhook, Pagination,
-    ProviderConfig, ProviderConfigRepository, Suppression, SuppressionRepository, Verification,
-    VerificationRepository, Webhook, WebhookRepository,
+    NewMessage, NewProviderConfig, NewSuppression, NewTotpUser, NewVerification, NewWebhook,
+    Pagination, ProviderConfig, ProviderConfigRepository, Suppression, SuppressionRepository,
+    TotpRepository, TotpUser, Verification, VerificationRepository, Webhook, WebhookRepository,
 };
 
 // ---------------------------------------------------------------------------
@@ -101,6 +102,77 @@ impl chorus_server::db::VerificationRepository for NullVerificationRepo {
     async fn expire_pending(&self, _limit: i64) -> Result<u64, DbError> {
         Ok(0)
     }
+}
+
+/// No-op TOTP repo for tests that don't exercise TOTP logic.
+struct NullTotpRepo;
+
+#[async_trait]
+impl TotpRepository for NullTotpRepo {
+    async fn enroll(
+        &self,
+        _new_user: &NewTotpUser,
+        _hashes: &[Vec<u8>],
+    ) -> Result<TotpUser, DbError> {
+        Err(DbError::Internal(anyhow::anyhow!(
+            "NullTotpRepo::enroll not implemented"
+        )))
+    }
+    async fn find(&self, _account_id: Uuid, _user_id: &str) -> Result<Option<TotpUser>, DbError> {
+        Ok(None)
+    }
+    async fn activate(&self, _account_id: Uuid, _user_id: &str) -> Result<(), DbError> {
+        Err(DbError::NotFound)
+    }
+    async fn touch_last_verified(&self, _account_id: Uuid, _user_id: &str) -> Result<(), DbError> {
+        Ok(())
+    }
+    async fn disenroll(&self, _account_id: Uuid, _user_id: &str) -> Result<bool, DbError> {
+        Ok(false)
+    }
+    async fn consume_backup_code(
+        &self,
+        _account_id: Uuid,
+        _user_id: &str,
+        _hash: &[u8],
+    ) -> Result<bool, DbError> {
+        Ok(false)
+    }
+    async fn unused_backup_codes_count(
+        &self,
+        _account_id: Uuid,
+        _user_id: &str,
+    ) -> Result<i64, DbError> {
+        Ok(0)
+    }
+    async fn replace_backup_codes(
+        &self,
+        _account_id: Uuid,
+        _user_id: &str,
+        _hashes: &[Vec<u8>],
+    ) -> Result<(), DbError> {
+        Ok(())
+    }
+}
+
+/// Test helper: returns a shared `Arc<Encryptor>` constructed once from a
+/// 32-byte fixed test key. NOT for production — for tests only.
+///
+/// We bypass `Encryptor::from_env` to avoid racing on the `CHORUS_ENCRYPTION_KEY`
+/// env var when tests run in parallel.
+fn null_encryptor() -> Arc<Encryptor> {
+    use std::sync::OnceLock;
+    static ENCRYPTOR: OnceLock<Arc<Encryptor>> = OnceLock::new();
+    ENCRYPTOR
+        .get_or_init(|| {
+            use base64::Engine;
+            let key_b64 = base64::engine::general_purpose::STANDARD.encode([0u8; 32]);
+            // Set the env var (safe here because this runs exactly once,
+            // before any other test thread reads it via this helper).
+            std::env::set_var("CHORUS_ENCRYPTION_KEY", &key_b64);
+            Arc::new(Encryptor::from_env().expect("encryptor from null key"))
+        })
+        .clone()
 }
 
 struct MockAccountRepo {
@@ -506,6 +578,8 @@ fn test_fixture() -> TestFixture {
 
     let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(NullIdempotencyRepo);
     let verification_repo: Arc<dyn VerificationRepository> = Arc::new(NullVerificationRepo);
+    let totp_repo: Arc<dyn TotpRepository> = Arc::new(NullTotpRepo);
+    let encryptor = null_encryptor();
 
     let state = Arc::new(AppState::with_repos(
         redis,
@@ -518,6 +592,8 @@ fn test_fixture() -> TestFixture {
         suppressions.clone(),
         idempotency_repo,
         verification_repo,
+        totp_repo,
+        encryptor,
     ));
 
     TestFixture {
@@ -1778,6 +1854,8 @@ fn fixture_with_mem_idempotency() -> (Arc<AppState>, Arc<MockMessageRepo>) {
     let webhook_repo = Arc::new(MockWebhookRepo);
     let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
     let verification_repo: Arc<dyn VerificationRepository> = Arc::new(NullVerificationRepo);
+    let totp_repo: Arc<dyn TotpRepository> = Arc::new(NullTotpRepo);
+    let encryptor = null_encryptor();
 
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
     let config = Arc::new(Config::from_env());
@@ -1793,6 +1871,8 @@ fn fixture_with_mem_idempotency() -> (Arc<AppState>, Arc<MockMessageRepo>) {
         suppressions,
         idempotency_repo,
         verification_repo,
+        totp_repo,
+        encryptor,
     ));
 
     (state, messages)
@@ -2236,6 +2316,8 @@ fn fixture_two_api_keys() -> Arc<AppState> {
     let webhook_repo = Arc::new(MockWebhookRepo);
     let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
     let verification_repo: Arc<dyn VerificationRepository> = Arc::new(NullVerificationRepo);
+    let totp_repo: Arc<dyn TotpRepository> = Arc::new(NullTotpRepo);
+    let encryptor = null_encryptor();
 
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
     let config = Arc::new(Config::from_env());
@@ -2251,6 +2333,8 @@ fn fixture_two_api_keys() -> Arc<AppState> {
         suppressions,
         idempotency_repo,
         verification_repo,
+        totp_repo,
+        encryptor,
     ))
 }
 
@@ -2490,6 +2574,8 @@ fn fixture_with_verification() -> (Arc<AppState>, Arc<MemVerificationRepo>) {
     let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
     let verification_repo: Arc<MemVerificationRepo> = Arc::new(MemVerificationRepo::new());
     let verification_dyn: Arc<dyn VerificationRepository> = verification_repo.clone();
+    let totp_repo: Arc<dyn TotpRepository> = Arc::new(NullTotpRepo);
+    let encryptor = null_encryptor();
     let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
     let config = Arc::new(Config::from_env());
     let state = Arc::new(AppState::with_repos(
@@ -2503,6 +2589,8 @@ fn fixture_with_verification() -> (Arc<AppState>, Arc<MemVerificationRepo>) {
         suppressions,
         idempotency_repo,
         verification_dyn,
+        totp_repo,
+        encryptor,
     ));
     (state, verification_repo)
 }
@@ -2995,4 +3083,701 @@ async fn legacy_otp_send_still_works() {
         .unwrap();
     // Legacy route returns 422 due to suppression — works as before.
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+// ----- B2 TOTP tests -----
+
+/// One row of the in-memory backup-codes table:
+/// (account_id, user_id, code_hash, used_at).
+type MemBackupCodeRow = (Uuid, String, Vec<u8>, Option<chrono::DateTime<Utc>>);
+
+struct MemTotpRepo {
+    users: tokio::sync::Mutex<Vec<TotpUser>>,
+    codes: tokio::sync::Mutex<Vec<MemBackupCodeRow>>,
+}
+
+impl MemTotpRepo {
+    fn new() -> Self {
+        Self {
+            users: tokio::sync::Mutex::new(vec![]),
+            codes: tokio::sync::Mutex::new(vec![]),
+        }
+    }
+}
+
+#[async_trait]
+impl TotpRepository for MemTotpRepo {
+    async fn enroll(
+        &self,
+        new_user: &NewTotpUser,
+        hashes: &[Vec<u8>],
+    ) -> Result<TotpUser, DbError> {
+        let mut users = self.users.lock().await;
+        if users
+            .iter()
+            .any(|u| u.account_id == new_user.account_id && u.user_id == new_user.user_id)
+        {
+            return Err(DbError::Internal(anyhow::anyhow!("duplicate")));
+        }
+        let now = Utc::now();
+        let u = TotpUser {
+            account_id: new_user.account_id,
+            user_id: new_user.user_id.clone(),
+            secret: new_user.encrypted_secret.clone(),
+            status: "pending".into(),
+            algorithm: "SHA1".into(),
+            digits: 6,
+            period_secs: 30,
+            issuer: new_user.issuer.clone(),
+            label: new_user.label.clone(),
+            last_verified_at: None,
+            created_at: now,
+            activated_at: None,
+            updated_at: now,
+        };
+        users.push(u.clone());
+        let mut codes = self.codes.lock().await;
+        for h in hashes {
+            codes.push((
+                new_user.account_id,
+                new_user.user_id.clone(),
+                h.clone(),
+                None,
+            ));
+        }
+        Ok(u)
+    }
+
+    async fn find(&self, account_id: Uuid, user_id: &str) -> Result<Option<TotpUser>, DbError> {
+        Ok(self
+            .users
+            .lock()
+            .await
+            .iter()
+            .find(|u| u.account_id == account_id && u.user_id == user_id)
+            .cloned())
+    }
+
+    async fn activate(&self, account_id: Uuid, user_id: &str) -> Result<(), DbError> {
+        let mut users = self.users.lock().await;
+        if let Some(u) = users
+            .iter_mut()
+            .find(|u| u.account_id == account_id && u.user_id == user_id && u.status == "pending")
+        {
+            u.status = "active".into();
+            u.activated_at = Some(Utc::now());
+            return Ok(());
+        }
+        Err(DbError::NotFound)
+    }
+
+    async fn touch_last_verified(&self, account_id: Uuid, user_id: &str) -> Result<(), DbError> {
+        let mut users = self.users.lock().await;
+        if let Some(u) = users
+            .iter_mut()
+            .find(|u| u.account_id == account_id && u.user_id == user_id && u.status == "active")
+        {
+            u.last_verified_at = Some(Utc::now());
+        }
+        Ok(())
+    }
+
+    async fn disenroll(&self, account_id: Uuid, user_id: &str) -> Result<bool, DbError> {
+        let mut users = self.users.lock().await;
+        if let Some(u) = users
+            .iter_mut()
+            .find(|u| u.account_id == account_id && u.user_id == user_id && u.status != "disabled")
+        {
+            u.status = "disabled".into();
+            u.secret = vec![0];
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    async fn consume_backup_code(
+        &self,
+        account_id: Uuid,
+        user_id: &str,
+        code_hash: &[u8],
+    ) -> Result<bool, DbError> {
+        let mut codes = self.codes.lock().await;
+        if let Some(c) = codes.iter_mut().find(|(a, u, h, used)| {
+            *a == account_id && u == user_id && h.as_slice() == code_hash && used.is_none()
+        }) {
+            c.3 = Some(Utc::now());
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    async fn unused_backup_codes_count(
+        &self,
+        account_id: Uuid,
+        user_id: &str,
+    ) -> Result<i64, DbError> {
+        let codes = self.codes.lock().await;
+        Ok(codes
+            .iter()
+            .filter(|(a, u, _, used)| *a == account_id && u == user_id && used.is_none())
+            .count() as i64)
+    }
+
+    async fn replace_backup_codes(
+        &self,
+        account_id: Uuid,
+        user_id: &str,
+        new_hashes: &[Vec<u8>],
+    ) -> Result<(), DbError> {
+        let mut codes = self.codes.lock().await;
+        codes.retain(|(a, u, _, _)| !(*a == account_id && u == user_id));
+        for h in new_hashes {
+            codes.push((account_id, user_id.to_string(), h.clone(), None));
+        }
+        Ok(())
+    }
+}
+
+fn fixture_with_totp() -> (Arc<AppState>, Arc<MemTotpRepo>) {
+    let key_hash = hex::encode(Sha256::digest(TEST_API_KEY.as_bytes()));
+    let account_id = Uuid::new_v4();
+    let key_id = Uuid::new_v4();
+    let account_repo = Arc::new(MockAccountRepo {
+        account: Account {
+            id: account_id,
+            name: "Test".into(),
+            owner_email: "t@t".into(),
+            is_active: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        },
+        api_key: ApiKey {
+            id: key_id,
+            account_id,
+            name: "k".into(),
+            key_prefix: "ch_test_ab...".into(),
+            environment: "test".into(),
+            last_used_at: None,
+            expires_at: None,
+            is_revoked: false,
+            created_at: Utc::now(),
+        },
+        key_hash,
+    });
+    let messages = Arc::new(MockMessageRepo::new());
+    let suppressions = Arc::new(MockSuppressionRepo::new());
+    let api_key_repo = Arc::new(MockApiKeyRepo);
+    let provider_config_repo = Arc::new(MockProviderConfigRepo);
+    let webhook_repo = Arc::new(MockWebhookRepo);
+    let idempotency_repo: Arc<dyn IdempotencyRepository> = Arc::new(MemIdempotencyRepo::new());
+    let verification_repo: Arc<dyn VerificationRepository> = Arc::new(NullVerificationRepo);
+    let totp_repo: Arc<MemTotpRepo> = Arc::new(MemTotpRepo::new());
+    let totp_dyn: Arc<dyn TotpRepository> = totp_repo.clone();
+    let encryptor = null_encryptor();
+    let redis = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+    let config = Arc::new(Config::from_env());
+    let state = Arc::new(AppState::with_repos(
+        redis,
+        config,
+        account_repo,
+        messages,
+        api_key_repo,
+        provider_config_repo,
+        webhook_repo,
+        suppressions,
+        idempotency_repo,
+        verification_repo,
+        totp_dyn,
+        encryptor,
+    ));
+    (state, totp_repo)
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn enroll_returns_qr_and_pending_status() {
+    let (state, _repo) = fixture_with_totp();
+    let app = create_router(state);
+    let body = serde_json::json!({"user_id":"alice@app.com","issuer":"Acme"}).to_string();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let v = response_body(resp).await;
+    assert_eq!(v["user_id"], "alice@app.com");
+    assert_eq!(v["status"], "pending");
+    assert!(v["otpauth_uri"]
+        .as_str()
+        .unwrap()
+        .starts_with("otpauth://totp/"));
+    assert!(v["qr_code_png"]
+        .as_str()
+        .unwrap()
+        .starts_with("data:image/png;base64,"));
+    assert_eq!(v["backup_codes"].as_array().unwrap().len(), 10);
+    assert_eq!(v["cost_micro"], 0);
+}
+
+#[tokio::test]
+async fn enroll_returns_400_when_user_id_empty() {
+    let (state, _repo) = fixture_with_totp();
+    let app = create_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"user_id":""}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response_body(resp).await["error"]["code"],
+        "invalid_user_id"
+    );
+}
+
+#[tokio::test]
+async fn enroll_returns_400_when_user_id_too_long() {
+    let (state, _repo) = fixture_with_totp();
+    let app = create_router(state);
+    let long = "a".repeat(256);
+    let body = serde_json::json!({"user_id": long}).to_string();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn enroll_returns_409_when_user_already_enrolled() {
+    let (state, _repo) = fixture_with_totp();
+    let app = create_router(state);
+    let body = serde_json::json!({"user_id":"alice"}).to_string();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        response_body(resp).await["error"]["code"],
+        "already_enrolled"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn enroll_idempotency_replay_is_identical() {
+    let (state, _repo) = fixture_with_totp();
+    let app = create_router(state);
+    let key = "enroll-key-1";
+    let body = serde_json::json!({"user_id":"bob"}).to_string();
+
+    let resp1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::CREATED);
+    let bytes1 = resp1.into_body().collect().await.unwrap().to_bytes();
+
+    let resp2 = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("Idempotency-Key", key)
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::CREATED);
+    let bytes2 = resp2.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(bytes1, bytes2);
+}
+
+#[tokio::test]
+async fn activate_returns_404_when_unknown_user() {
+    let (state, _repo) = fixture_with_totp();
+    let app = create_router(state);
+    let body = serde_json::json!({"user_id":"ghost","code":"123456"}).to_string();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/activate")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn disenroll_active_user_succeeds_and_second_call_returns_410() {
+    let (state, _repo) = fixture_with_totp();
+    let app = create_router(state);
+    let body = serde_json::json!({"user_id":"alice"}).to_string();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/totp/alice")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/totp/alice")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::GONE);
+}
+
+#[tokio::test]
+async fn status_for_unknown_user_returns_404() {
+    let (state, _repo) = fixture_with_totp();
+    let app = create_router(state);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/totp/ghost")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn status_for_pending_user_returns_metadata() {
+    let (state, _repo) = fixture_with_totp();
+    let app = create_router(state);
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"user_id":"alice"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/totp/alice")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = response_body(resp).await;
+    assert_eq!(v["user_id"], "alice");
+    assert_eq!(v["status"], "pending");
+    // ensure no plaintext secret leaks
+    assert!(v.get("secret").is_none());
+}
+
+#[tokio::test]
+async fn verify_returns_404_when_unknown_user() {
+    let (state, _repo) = fixture_with_totp();
+    let app = create_router(state);
+    // No enrollment exists → find returns None → 404
+    let body = serde_json::json!({"user_id":"ghost","code":"483921"}).to_string();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/verify")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn verify_with_backup_code_consumes_one() {
+    let (state, repo) = fixture_with_totp();
+    let app = create_router(state);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"user_id":"alice"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let v = response_body(resp).await;
+    let backup0 = v["backup_codes"][0].as_str().unwrap().to_string();
+
+    // Move user to active status directly via the repo (skip /activate which requires TOTP code)
+    {
+        let mut users = repo.users.lock().await;
+        for x in users.iter_mut() {
+            if x.user_id == "alice" {
+                x.status = "active".into();
+            }
+        }
+    }
+
+    let body = serde_json::json!({"user_id":"alice","code":backup0}).to_string();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/verify")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = response_body(resp).await;
+    assert_eq!(v["verified"], true);
+    assert_eq!(v["method"], "backup_code");
+    assert_eq!(v["cost_micro"], 0);
+
+    // Replay same backup code → 422 incorrect_code
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/verify")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(response_body(resp).await["error"]["code"], "incorrect_code");
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn regenerate_returns_new_backup_codes_and_invalidates_old() {
+    let (state, repo) = fixture_with_totp();
+    let app = create_router(state);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"user_id":"alice"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let v = response_body(resp).await;
+    let old_first = v["backup_codes"][0].as_str().unwrap().to_string();
+
+    // Make user active
+    {
+        let mut users = repo.users.lock().await;
+        for x in users.iter_mut() {
+            if x.user_id == "alice" {
+                x.status = "active".into();
+            }
+        }
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/backup-codes/regenerate")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"user_id":"alice"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = response_body(resp).await;
+    let new_codes = v["backup_codes"].as_array().unwrap();
+    assert_eq!(new_codes.len(), 10);
+    assert!(!new_codes.iter().any(|c| c.as_str().unwrap() == old_first));
+
+    // Old code now invalid → 422
+    let body = serde_json::json!({"user_id":"alice","code":old_first}).to_string();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/verify")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+#[ignore = "requires Valkey/Redis on localhost:6379"]
+async fn rate_limit_per_user_blocks_after_5_verifies() {
+    let (state, repo) = fixture_with_totp();
+    let app = create_router(state);
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/totp/enroll")
+                .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(r#"{"user_id":"alice"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    {
+        let mut users = repo.users.lock().await;
+        for x in users.iter_mut() {
+            if x.user_id == "alice" {
+                x.status = "active".into();
+            }
+        }
+    }
+    let body = serde_json::json!({"user_id":"alice","code":"000000"}).to_string();
+    let mut codes_seen = vec![];
+    for _ in 0..6 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/totp/verify")
+                    .header("authorization", format!("Bearer {TEST_API_KEY}"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        codes_seen.push(resp.status().as_u16());
+    }
+    // First 5: 422 incorrect_code; 6th: 429 rate_limited
+    assert_eq!(&codes_seen[..5], &[422, 422, 422, 422, 422]);
+    assert_eq!(codes_seen[5], 429);
 }
