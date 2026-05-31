@@ -12,7 +12,14 @@ use crate::db::NewMessage;
 use crate::idempotency::{self, IdempotencyAction};
 use crate::queue::SendJob;
 
+use axum::routing::post;
+
 const ROUTE_PATH: &str = "/v1/sms/send";
+
+/// Build the SMS sub-router.
+pub fn router() -> axum::Router<Arc<AppState>> {
+    axum::Router::new().route("/send", post(send_sms))
+}
 
 /// SMS send request body.
 #[derive(Deserialize)]

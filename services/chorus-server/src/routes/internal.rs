@@ -6,6 +6,15 @@ use std::sync::Arc;
 
 use crate::app::AppState;
 
+use axum::Router;
+
+/// Build the internal sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/bounces", axum::routing::post(handle_bounce))
+        .route("/dns-check", axum::routing::get(dns_check))
+}
+
 /// Bounce notification from chorus-mail.
 #[derive(Deserialize)]
 pub struct BounceNotification {

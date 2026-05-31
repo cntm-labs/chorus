@@ -5,6 +5,14 @@ use std::sync::Arc;
 
 use crate::app::AppState;
 
+use axum::routing::get;
+use axum::Router;
+
+/// Build the health sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new().route("/", get(health))
+}
+
 /// Health check response with component details.
 #[derive(Serialize)]
 pub struct HealthResponse {

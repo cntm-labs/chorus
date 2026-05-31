@@ -9,6 +9,18 @@ use crate::auth::api_key::AccountContext;
 use crate::billing::stripe_client::StripeClient;
 use crate::db::billing::{BillingPlan, Subscription, Usage};
 
+use axum::routing::get;
+use axum::Router;
+
+/// Build the billing sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/plans", get(list_plans))
+        .route("/plan", get(get_plan))
+        .route("/checkout", axum::routing::post(create_checkout))
+        .route("/usage", get(get_usage))
+}
+
 /// Response for current plan + usage.
 #[derive(Serialize)]
 pub struct PlanUsageResponse {

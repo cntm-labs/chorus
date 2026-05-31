@@ -9,6 +9,16 @@ use crate::auth::api_key::AccountContext;
 use crate::db::{NewSuppression, Pagination, Suppression};
 use crate::suppression::normalize;
 
+use axum::routing::{delete, get};
+use axum::Router;
+
+/// Build the suppressions sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/", get(list_suppressions).post(create_suppression))
+        .route("/{channel}/{recipient}", delete(delete_suppression))
+}
+
 const DEFAULT_LIMIT: i64 = 20;
 const MAX_LIMIT: i64 = 100;
 

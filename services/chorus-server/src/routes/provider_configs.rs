@@ -9,6 +9,16 @@ use crate::app::AppState;
 use crate::auth::api_key::AccountContext;
 use crate::db::{NewProviderConfig, ProviderConfig};
 
+use axum::routing::{delete, get};
+use axum::Router;
+
+/// Build the provider configs sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/", get(list_provider_configs).post(create_provider_config))
+        .route("/{id}", delete(delete_provider_config))
+}
+
 /// Request body for adding a provider config.
 #[derive(Deserialize)]
 pub struct CreateProviderConfigRequest {
