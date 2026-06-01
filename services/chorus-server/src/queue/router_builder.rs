@@ -44,84 +44,81 @@ pub fn build_router_from_configs(configs: &[ProviderConfig]) -> anyhow::Result<W
 pub fn build_router_from_env(config: &Config, channel: &str) -> anyhow::Result<WaterfallRouter> {
     let mut router = WaterfallRouter::new();
 
-    match channel {
-        "sms" => {
-            if let Some(ref api_key) = config.telnyx_api_key {
-                router = router.add_sms(Arc::new(TelnyxSmsSender::new(
-                    api_key.clone(),
-                    config.telnyx_from.clone(),
-                )));
-            }
-            if let (Some(ref sid), Some(ref token)) =
-                (&config.twilio_account_sid, &config.twilio_auth_token)
-            {
-                router = router.add_sms(Arc::new(TwilioSmsSender::new(
-                    sid.clone(),
-                    token.clone(),
-                    config.twilio_from.clone(),
-                )));
-            }
-            if let (Some(ref id), Some(ref token)) =
-                (&config.plivo_auth_id, &config.plivo_auth_token)
-            {
-                router = router.add_sms(Arc::new(PlivoSmsSender::new(
-                    id.clone(),
-                    token.clone(),
-                    config.plivo_from.clone(),
-                )));
-            }
-        }
-        "email" => {
-            if let (Some(ref api_key), Some(ref from)) =
-                (&config.resend_api_key, &config.from_email)
-            {
-                router = router.add_email(Arc::new(ResendEmailSender::new(
-                    api_key.clone(),
-                    from.clone(),
-                )));
-            }
-            if let (Some(ref ak), Some(ref sk), Some(ref region), Some(ref from)) = (
-                &config.ses_access_key,
-                &config.ses_secret_key,
-                &config.ses_region,
-                &config.from_email,
-            ) {
-                let sender =
-                    SesEmailSender::new(ak.clone(), sk.clone(), region.clone(), from.clone())?;
-                router = router.add_email(Arc::new(sender));
-            }
-            if let (Some(ref host), Some(port), Some(ref user), Some(ref pass), Some(ref from)) = (
-                &config.smtp_host,
-                config.smtp_port,
-                &config.smtp_username,
-                &config.smtp_password,
-                &config.from_email,
-            ) {
-                let sender = SmtpEmailSender::new(
-                    host.clone(),
-                    port,
-                    user.clone(),
-                    pass.clone(),
-                    from.clone(),
-                )?;
-                router = router.add_email(Arc::new(sender));
-            }
-            if let (Some(ref api_key), Some(ref domain), Some(ref from)) = (
-                &config.mailgun_api_key,
-                &config.mailgun_domain,
-                &config.from_email,
-            ) {
-                let mut sender =
-                    MailgunEmailSender::new(api_key.clone(), domain.clone(), from.clone());
-                if let Some(ref base_url) = config.mailgun_base_url {
-                    sender = sender.with_base_url(base_url.clone());
-                }
-                router = router.add_email(Arc::new(sender));
-            }
-        }
-        _ => {}
-    }
+    router = match channel {
+        "sms" => add_sms_providers(router, config),
+        "email" => add_email_providers(router, config)?,
+        _ => router,
+    };
 
+    Ok(router)
+}
+
+fn add_sms_providers(mut router: WaterfallRouter, config: &Config) -> WaterfallRouter {
+    if let Some(ref api_key) = config.telnyx_api_key {
+        router = router.add_sms(Arc::new(TelnyxSmsSender::new(
+            api_key.clone(),
+            config.telnyx_from.clone(),
+        )));
+    }
+    if let (Some(ref sid), Some(ref token)) = (&config.twilio_account_sid, &config.twilio_auth_token)
+    {
+        router = router.add_sms(Arc::new(TwilioSmsSender::new(
+            sid.clone(),
+            token.clone(),
+            config.twilio_from.clone(),
+        )));
+    }
+    if let (Some(ref id), Some(ref token)) = (&config.plivo_auth_id, &config.plivo_auth_token) {
+        router = router.add_sms(Arc::new(PlivoSmsSender::new(
+            id.clone(),
+            token.clone(),
+            config.plivo_from.clone(),
+        )));
+    }
+    router
+}
+
+fn add_email_providers(
+    mut router: WaterfallRouter,
+    config: &Config,
+) -> anyhow::Result<WaterfallRouter> {
+    if let (Some(ref api_key), Some(ref from)) = (&config.resend_api_key, &config.from_email) {
+        router = router.add_email(Arc::new(ResendEmailSender::new(
+            api_key.clone(),
+            from.clone(),
+        )));
+    }
+    if let (Some(ref ak), Some(ref sk), Some(ref region), Some(ref from)) = (
+        &config.ses_access_key,
+        &config.ses_secret_key,
+        &config.ses_region,
+        &config.from_email,
+    ) {
+        let sender = SesEmailSender::new(ak.clone(), sk.clone(), region.clone(), from.clone())?;
+        router = router.add_email(Arc::new(sender));
+    }
+    if let (Some(ref host), Some(port), Some(ref user), Some(ref pass), Some(ref from)) = (
+        &config.smtp_host,
+        config.smtp_port,
+        &config.smtp_username,
+        &config.smtp_password,
+        &config.from_email,
+    ) {
+        let sender =
+            SmtpEmailSender::new(host.clone(), port, user.clone(), pass.clone(), from.clone())?;
+        router = router.add_email(Arc::new(sender));
+    }
+    if let (Some(ref api_key), Some(ref domain), Some(ref from)) = (
+        &config.mailgun_api_key,
+        &config.mailgun_domain,
+        &config.from_email,
+    ) {
+        let mut sender = MailgunEmailSender::new(api_key.clone(), domain.clone(), from.clone());
+        if let Some(ref base_url) = config.mailgun_base_url {
+            sender = sender.with_base_url(base_url.clone());
+        }
+        router = router.add_email(Arc::new(sender));
+    }
     Ok(router)
 }
 
