@@ -10,6 +10,16 @@ use crate::app::AppState;
 use crate::auth::api_key::AccountContext;
 use crate::db::ApiKey;
 
+use axum::routing::{delete, get};
+use axum::Router;
+
+/// Build the keys sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/", get(list_keys).post(create_key))
+        .route("/{id}", delete(revoke_key))
+}
+
 /// Request body for creating a new API key.
 #[derive(Deserialize)]
 pub struct CreateKeyRequest {

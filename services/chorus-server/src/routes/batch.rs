@@ -12,6 +12,16 @@ use crate::db::NewMessage;
 use crate::idempotency::{self, IdempotencyAction, IdempotencyToken};
 use crate::queue::SendJob;
 
+use axum::routing::post;
+use axum::Router;
+
+/// Build the batch sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/sms/send-batch", post(send_sms_batch))
+        .route("/email/send-batch", post(send_email_batch))
+}
+
 const SMS_BATCH_PATH: &str = "/v1/sms/send-batch";
 const EMAIL_BATCH_PATH: &str = "/v1/email/send-batch";
 

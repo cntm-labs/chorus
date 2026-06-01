@@ -16,6 +16,19 @@ use crate::verification::{
     self, ChannelChoice, CheckCodeOutcome, RoutingError, MAX_CHECK_ATTEMPTS,
 };
 
+use axum::routing::{get, post};
+use axum::Router;
+
+/// Build the verifications sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/", post(create_verification).get(list_verifications))
+        .route("/{id}", get(get_verification))
+        .route("/{id}/check", post(check_verification))
+        .route("/{id}/cancel", post(cancel_verification))
+        .route("/{id}/resend", post(resend_verification))
+}
+
 const CREATE_PATH: &str = "/v1/verifications";
 
 #[derive(Deserialize)]

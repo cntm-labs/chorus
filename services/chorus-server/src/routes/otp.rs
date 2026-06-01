@@ -11,7 +11,17 @@ use crate::app::AppState;
 use crate::auth::api_key::AccountContext;
 use crate::idempotency::{self, IdempotencyAction};
 
+use axum::routing::post;
+use axum::Router;
+
 const ROUTE_PATH: &str = "/v1/otp/send";
+
+/// Build the OTP sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/send", post(send_otp))
+        .route("/verify", post(verify_otp))
+}
 
 /// OTP send request body.
 #[derive(Deserialize)]

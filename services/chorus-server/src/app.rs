@@ -1,5 +1,5 @@
 use axum::middleware as axum_middleware;
-use axum::routing::{delete, get, post};
+use axum::routing::get;
 use axum::Router;
 use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::PgPool;
@@ -218,93 +218,7 @@ pub fn create_router_with_metrics(
     state: Arc<AppState>,
     metrics_handle: Option<PrometheusHandle>,
 ) -> Router {
-    let mut router = Router::new()
-        .route("/health", get(routes::health::health))
-        .route("/v1/sms/send", post(routes::sms::send_sms))
-        .route("/v1/email/send", post(routes::email::send_email))
-        .route("/v1/messages", get(routes::messages::list_messages))
-        .route("/v1/messages/{id}", get(routes::messages::get_message))
-        .route(
-            "/v1/keys",
-            get(routes::keys::list_keys).post(routes::keys::create_key),
-        )
-        .route("/v1/keys/{id}", delete(routes::keys::revoke_key))
-        .route("/v1/otp/send", post(routes::otp::send_otp))
-        .route("/v1/otp/verify", post(routes::otp::verify_otp))
-        .route(
-            "/v1/providers",
-            get(routes::provider_configs::list_provider_configs)
-                .post(routes::provider_configs::create_provider_config),
-        )
-        .route(
-            "/v1/providers/{id}",
-            delete(routes::provider_configs::delete_provider_config),
-        )
-        .route(
-            "/v1/webhooks",
-            get(routes::webhooks::list_webhooks).post(routes::webhooks::create_webhook),
-        )
-        .route(
-            "/v1/webhooks/{id}",
-            delete(routes::webhooks::delete_webhook),
-        )
-        .route(
-            "/v1/suppressions",
-            get(routes::suppressions::list_suppressions)
-                .post(routes::suppressions::create_suppression),
-        )
-        .route(
-            "/v1/suppressions/{channel}/{recipient}",
-            delete(routes::suppressions::delete_suppression),
-        )
-        .route("/v1/sms/send-batch", post(routes::batch::send_sms_batch))
-        .route(
-            "/v1/email/send-batch",
-            post(routes::batch::send_email_batch),
-        )
-        .route("/v1/billing/plans", get(routes::billing::list_plans))
-        .route("/v1/billing/plan", get(routes::billing::get_plan))
-        .route(
-            "/v1/billing/checkout",
-            post(routes::billing::create_checkout),
-        )
-        .route("/v1/billing/usage", get(routes::billing::get_usage))
-        .route(
-            "/v1/verifications",
-            post(routes::verifications::create_verification)
-                .get(routes::verifications::list_verifications),
-        )
-        .route(
-            "/v1/verifications/{id}",
-            get(routes::verifications::get_verification),
-        )
-        .route(
-            "/v1/verifications/{id}/check",
-            post(routes::verifications::check_verification),
-        )
-        .route(
-            "/v1/verifications/{id}/cancel",
-            post(routes::verifications::cancel_verification),
-        )
-        .route(
-            "/v1/verifications/{id}/resend",
-            post(routes::verifications::resend_verification),
-        )
-        .route("/internal/bounces", post(routes::internal::handle_bounce))
-        .route("/internal/dns-check", get(routes::internal::dns_check))
-        .nest("/admin", routes::admin::router())
-        .route("/v1/totp/enroll", post(routes::totp::enroll_totp))
-        .route("/v1/totp/activate", post(routes::totp::activate_totp))
-        .route("/v1/totp/verify", post(routes::totp::verify_totp))
-        .route(
-            "/v1/totp/{user_id}",
-            get(routes::totp::get_totp_status).delete(routes::totp::disenroll_totp),
-        )
-        .route(
-            "/v1/totp/backup-codes/regenerate",
-            post(routes::totp::regenerate_backup_codes),
-        )
-        .route("/v1/totp/{user_id}/qr", get(routes::totp::get_totp_qr))
+    let mut router = routes::main_router()
         .with_state(state)
         .layer(axum_middleware::from_fn(crate::middleware::metrics::track))
         .layer(axum_middleware::from_fn(

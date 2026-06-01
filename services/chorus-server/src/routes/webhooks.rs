@@ -10,6 +10,16 @@ use crate::app::AppState;
 use crate::auth::api_key::AccountContext;
 use crate::db::NewWebhook;
 
+use axum::routing::{delete, get};
+use axum::Router;
+
+/// Build the webhooks sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/", get(list_webhooks).post(create_webhook))
+        .route("/{id}", delete(delete_webhook))
+}
+
 /// Request body for registering a webhook.
 #[derive(Deserialize)]
 pub struct CreateWebhookRequest {

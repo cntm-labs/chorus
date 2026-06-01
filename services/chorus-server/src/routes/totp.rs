@@ -12,6 +12,20 @@ use crate::db::{NewTotpUser, TotpUser};
 use crate::idempotency::{self, IdempotencyAction, IdempotencyToken};
 use crate::totp::{self, RateLimitKind, TotpError};
 
+use axum::routing::{get, post};
+use axum::Router;
+
+/// Build the TOTP sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/enroll", post(enroll_totp))
+        .route("/activate", post(activate_totp))
+        .route("/verify", post(verify_totp))
+        .route("/{user_id}", get(get_totp_status).delete(disenroll_totp))
+        .route("/backup-codes/regenerate", post(regenerate_backup_codes))
+        .route("/{user_id}/qr", get(get_totp_qr))
+}
+
 const ENROLL_PATH: &str = "/v1/totp/enroll";
 
 #[derive(Deserialize)]

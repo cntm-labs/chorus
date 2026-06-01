@@ -12,7 +12,15 @@ use crate::idempotency::{self, IdempotencyAction};
 use crate::queue::SendJob;
 use crate::routes::sms::SendResponse;
 
+use axum::routing::post;
+use axum::Router;
+
 const ROUTE_PATH: &str = "/v1/email/send";
+
+/// Build the email sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new().route("/send", post(send_email))
+}
 
 /// Email send request body.
 #[derive(Deserialize)]

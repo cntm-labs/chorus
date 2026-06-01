@@ -9,6 +9,16 @@ use crate::app::AppState;
 use crate::auth::api_key::AccountContext;
 use crate::db::{DeliveryEvent, Message, Pagination};
 
+use axum::routing::get;
+use axum::Router;
+
+/// Build the messages sub-router.
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/", get(list_messages))
+        .route("/{id}", get(get_message))
+}
+
 /// Query parameters for message listing.
 #[derive(Deserialize)]
 pub struct ListParams {
