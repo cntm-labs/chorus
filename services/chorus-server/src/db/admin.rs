@@ -298,15 +298,33 @@ impl AdminRepository for PgAdminRepository {
 
         let mut query = sqlx::query_as::<_, Message>(&sql);
 
-        if let Some(ref v) = filters.account_id { query = query.bind(v); }
-        if let Some(ref v) = filters.channel { query = query.bind(v); }
-        if let Some(ref v) = filters.status { query = query.bind(v); }
-        if let Some(ref v) = filters.provider { query = query.bind(v); }
-        if let Some(ref v) = filters.date_from { query = query.bind(v); }
-        if let Some(ref v) = filters.date_to { query = query.bind(v); }
-        if let Some(ref v) = filters.recipient { query = query.bind(format!("%{v}%")); }
-        if let Some(ref v) = filters.min_cost { query = query.bind(v); }
-        if let Some(ref v) = filters.max_cost { query = query.bind(v); }
+        if let Some(ref v) = filters.account_id {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = filters.channel {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = filters.status {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = filters.provider {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = filters.date_from {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = filters.date_to {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = filters.recipient {
+            query = query.bind(format!("%{v}%"));
+        }
+        if let Some(ref v) = filters.min_cost {
+            query = query.bind(v);
+        }
+        if let Some(ref v) = filters.max_cost {
+            query = query.bind(v);
+        }
 
         let limit = filters.limit.unwrap_or(50);
         let offset = filters.offset.unwrap_or(0);
