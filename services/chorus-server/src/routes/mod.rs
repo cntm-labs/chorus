@@ -44,5 +44,3 @@ pub fn main_router() -> Router<Arc<AppState>> {
         .nest("/admin", admin::router())
         .nest("/v1", v1_router())
 }
-
-
