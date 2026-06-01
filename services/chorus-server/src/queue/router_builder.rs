@@ -60,7 +60,8 @@ fn add_sms_providers(mut router: WaterfallRouter, config: &Config) -> WaterfallR
             config.telnyx_from.clone(),
         )));
     }
-    if let (Some(ref sid), Some(ref token)) = (&config.twilio_account_sid, &config.twilio_auth_token)
+    if let (Some(ref sid), Some(ref token)) =
+        (&config.twilio_account_sid, &config.twilio_auth_token)
     {
         router = router.add_sms(Arc::new(TwilioSmsSender::new(
             sid.clone(),
