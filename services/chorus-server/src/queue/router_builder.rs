@@ -69,7 +69,9 @@ fn add_sms_providers(mut router: WaterfallRouter, config: &Config) -> WaterfallR
             config.twilio_from.clone(),
         )));
     }
-    if let (Some(ref id), Some(ref token)) = (&config.plivo_auth_id, &config.plivo_auth_token) {
+    if let (Some(ref id), Some(ref token)) =
+        (&config.plivo_auth_id, &config.plivo_auth_token)
+    {
         router = router.add_sms(Arc::new(PlivoSmsSender::new(
             id.clone(),
             token.clone(),
