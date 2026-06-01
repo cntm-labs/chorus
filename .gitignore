@@ -24,3 +24,9 @@ lcov.info
 
 # Worktrees
 .worktrees
+
+# Superpowers
+docs/superpowers/
+
+# Graphify
+graphify-out/
